@@ -9,7 +9,7 @@ import { createPayroll, editPayroll, payrollAction } from "./payroll";
 
 const sampleVersion = "Expanded fictional demo samples v1";
 
-/** Opt-in local provisioning. Never promotes an ordinary company into a public demo. */
+/** Opt-in provisioning. Never promotes an ordinary company into a public demo. */
 export async function populateDemoSamples(store: Store) {
   const hashes = await Promise.all(
     [0, 1].map(() => hashPassword(randomBytes(32).toString("base64url"))),

@@ -9,7 +9,7 @@ import { DEMO_SLUG, DEMO_EMAIL } from "./demo-access";
 
 export { DEMO_SLUG, DEMO_EMAIL } from "./demo-access";
 
-/** Explicit local setup only. This is never called by server startup or an HTTP route. */
+/** Explicit provisioning only: CLI or opt-in hosted initialization, never an HTTP route. */
 export async function createDemoWorkspace(store: Store) {
   const password = `Demo!${randomBytes(18).toString("base64url")}`;
   const passwordHash = await hashPassword(password);

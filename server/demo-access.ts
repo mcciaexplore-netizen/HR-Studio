@@ -4,7 +4,7 @@ export const DEMO_SLUG = "mccia-demo";
 export const DEMO_EMAIL = "admin@mccia-demo.example";
 export const demoRoles = ["owner", "hr", "employee"] as const;
 
-/** Only the local provisioning command can populate this allowlist. */
+/** Only trusted provisioning code can populate this allowlist, never an HTTP route. */
 export function demoAccounts(store: Store) {
   return store.db
     .prepare(

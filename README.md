@@ -97,11 +97,12 @@ npm run lint
 npm test
 npm run build
 npm run test:production
+npm run test:hosted
 ```
 
 The integration suite uses isolated databases and injected mail transports; it sends no real email or payments. It verifies access boundaries, persistence, approvals, leave accounting, confidential tickets, policy evidence, imports, historical payroll, statutory boundaries, payment locking, attendance corrections, offboarding and integration token controls.
 
-The build places browser assets in `dist/public`, server code in `dist/server.cjs` and the isolated Excel reader in `dist/excel-worker.cjs`. Only `dist/public` is served to browsers. ExcelJS uses a scoped UUID override to the patched 11.x line; workbook round-trip and import tests cover that compatibility.
+The build places browser assets in `dist/public`, server code in `dist/server.cjs`, the isolated Excel reader in `dist/excel-worker.cjs` and the optional hosted demo provisioner in `dist/hosted-demo.cjs`. Only `dist/public` is served to browsers. ExcelJS uses a scoped UUID override to the patched 11.x line; workbook round-trip and import tests cover that compatibility.
 
 ```sh
 npm start
@@ -114,7 +115,25 @@ $env:COOKIE_SECURE = 'false'
 npm start
 ```
 
-For deployment, put the app behind HTTPS, set `APP_URL`, use secure cookies, close public registration, and protect the server filesystem and environment secrets. Run one application process with the SQLite database on a durable local disk. Horizontal scaling needs a shared database, coordinated rate limits and an object store.
+For deployment, use Node.js 24.x, put the app behind HTTPS, set `APP_URL`, use secure cookies, close public registration, and protect the server filesystem and environment secrets. Run one application process with the SQLite database on a durable local disk. Horizontal scaling needs a shared database, coordinated rate limits and an object store.
+
+### Full app on a persistent server
+
+The prepared [Render deployment](DEPLOYMENT.md) runs the frontend and API in one service, with SQLite on a persistent disk. `render.yaml` selects the existing feature branch and a small paid instance. Review the documented cost before creating the service.
+
+`npm run start:hosted` validates the HTTPS origin and absolute private database path, enables secure cookies and defaults to closed registration. With the Blueprint's explicit demo switches, it creates fictional samples only during initial setup and preserves them on later restarts. The hosted smoke test checks that saved records and sessions survive a restart. No local database or environment secrets are uploaded by this configuration.
+
+### Vercel: frontend output and backend requirements
+
+`vercel.json` explicitly selects Vite and publishes **`dist/public`**. The build writes the entry page to `dist/public/index.html`; publishing `dist` instead can leave `/` without an entry page and expose the separately bundled server code. The configuration uses `npm ci`, `npm run build`, and Node.js 24.x (pinned in `package.json`). Deploy the branch containing this configuration. Existing deployment URLs are immutable; open the new deployment after it completes.
+
+This configuration publishes the frontend only. The app also needs the Express `/api` endpoints and its writable SQLite database. Vercel Functions do not provide durable shared filesystem storage for that database. Changing the output directory does **not** make sign-in, demo accounts, payroll or saved records work on Vercel by themselves. Do not put the database under `public`, move it to temporary storage as a persistence workaround, or rewrite API requests to `index.html`.
+
+For the current complete app, deploy a single Node.js service with a persistent disk, run `npm ci && npm run build` then `npm start`, and set `HOST=0.0.0.0`, `DATABASE_PATH` to the disk's private mounted directory, `APP_URL` to the public HTTPS origin and `COOKIE_SECURE=true`. Alternatively, adapt the backend to a hosted database before moving it into Vercel Functions, or proxy `/api` to a separately hosted persistent backend.
+
+If Vercel displays **You Need Access**, sign in with an account authorized for the project. This is separate from application routing; changing the build output does not change deployment protection. Configure server environment variables through the hosting provider; `.env.local` is intentionally excluded from Git.
+
+References: [Vercel project configuration](https://vercel.com/docs/project-configuration), [Vercel and SQLite](https://vercel.com/kb/guide/is-sqlite-supported-in-vercel).
 
 ### Backup and recovery
 
