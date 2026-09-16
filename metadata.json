@@ -1,0 +1,6 @@
+{
+  "name": "HR Studio",
+  "description": "An AI-powered, modern Human Resource Management System for enterprise-grade employee, payroll, attendance, and document automation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

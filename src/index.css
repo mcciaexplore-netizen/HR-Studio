@@ -1,0 +1,186 @@
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Lato", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Poppins", "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", SFMono-Regular, monospace;
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.5;
+  --text-sm: 0.9375rem;
+  --text-sm--line-height: 1.5;
+  --color-indigo-50: #edf5fa;
+  --color-indigo-100: #daeaf5;
+  --color-indigo-200: #b8d8eb;
+  --color-indigo-300: #89bcda;
+  --color-indigo-400: #5b9dc7;
+  --color-indigo-500: #2980b8;
+  --color-indigo-600: #146caa;
+  --color-indigo-700: #105887;
+  --color-indigo-800: #10496e;
+  --color-indigo-900: #103b56;
+  --color-indigo-950: #0c263a;
+  --color-purple-50: #edf5fa;
+  --color-purple-100: #daeaf5;
+  --color-purple-200: #b8d8eb;
+  --color-purple-300: #89bcda;
+  --color-purple-400: #5b9dc7;
+  --color-purple-500: #2980b8;
+  --color-purple-600: #146caa;
+  --color-purple-700: #105887;
+  --color-purple-800: #10496e;
+  --color-purple-900: #103b56;
+  --color-purple-950: #0c263a;
+}
+
+/* MCCIA links Lato and Poppins on its homepage. Use the downloaded fonts
+   consistently across devices; proprietary Candara/Segoe files are not redistributed. */
+nav,
+button {
+  font-family: var(--font-sans);
+}
+
+@media print {
+  body {
+    background-color: white !important;
+    color: black !important;
+  }
+
+  /* Force background colors, gradients, and images to print in Chrome, Safari, Firefox, Edge */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  /* Completely hide navigation, sidebar, headers, and designer settings during print */
+  aside,
+  header,
+  .print\:hidden,
+  [class*="print:hidden"] {
+    display: none !important;
+  }
+
+  /* Clean up outer layouts for print viewport */
+  html,
+  body,
+  main,
+  #root {
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    height: 100% !important;
+    width: 100% !important;
+    overflow: visible !important;
+  }
+
+  /* Center the ID Card perfectly on the print page and slightly scale it for legibility */
+  #id-card-print-area {
+    position: absolute !important;
+    left: 50% !important;
+    top: 50% !important;
+    transform: translate(-50%, -50%) scale(1.4) !important;
+    transform-origin: center !important;
+    box-shadow: none !important;
+    border: none !important;
+    page-break-inside: avoid !important;
+  }
+}
+
+/* 3D Card Flip utilities */
+.perspective {
+  perspective: 1000px;
+}
+
+.transform-style {
+  transform-style: preserve-3d;
+}
+
+.backface-hidden {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+/* Shared accessible controls for account and saved-record workflows. */
+.account-panel {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 24px;
+}
+.dark .account-panel {
+  background: #0f172a;
+  border-color: #1e293b;
+}
+.account-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.account-field input,
+.account-field select,
+.account-field textarea {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-weight: 400;
+  color: #0f172a;
+  background: white;
+}
+.dark .account-field input,
+.dark .account-field select,
+.dark .account-field textarea {
+  background: #020617;
+  color: #f1f5f9;
+  border-color: #334155;
+}
+.account-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: #146caa;
+  color: white;
+  padding: 11px 16px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+}
+.account-primary:hover {
+  background: #003961;
+}
+button:disabled,
+fieldset:disabled {
+  opacity: 0.65;
+}
+button:disabled {
+  cursor: wait;
+}
+button,
+a,
+input,
+select,
+textarea {
+  scroll-margin-block: 24px;
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #818cf8;
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,37 @@
+const dictionaries: Record<string, Record<string, string>> = {
+  hi: {
+    dashboard: "अवलोकन",
+    employees: "कर्मचारी",
+    leaves: "छुट्टी और उपस्थिति",
+    payroll: "वेतन और वेतन पर्ची",
+    operations: "मानव संसाधन कार्य",
+    documents: "दस्तावेज़",
+    idcard: "पहचान पत्र",
+    recruitment: "भर्ती",
+    performance: "कार्य प्रदर्शन",
+    assets: "संपत्तियाँ",
+    orgchart: "विभाग",
+    emailhub: "ईमेल",
+    settings: "सेटिंग और पहुँच",
+  },
+  mr: {
+    dashboard: "आढावा",
+    employees: "कर्मचारी",
+    leaves: "रजा आणि उपस्थिती",
+    payroll: "वेतन आणि वेतनपत्रक",
+    operations: "मनुष्यबळ कामकाज",
+    documents: "कागदपत्रे",
+    idcard: "ओळखपत्रे",
+    recruitment: "भरती",
+    performance: "कामगिरी",
+    assets: "मालमत्ता",
+    orgchart: "विभाग",
+    emailhub: "ईमेल",
+    settings: "सेटिंग आणि प्रवेश",
+  },
+};
+export const navigationLabel = (
+  language: string,
+  key: string,
+  fallback: string,
+) => dictionaries[language]?.[key] || fallback;

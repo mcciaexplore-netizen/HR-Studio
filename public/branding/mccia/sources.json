@@ -1,0 +1,111 @@
+{
+  "website": "https://mcciapune.com/",
+  "stylesheet": "https://mcciapune.com/static/assets/scss/main.css",
+  "retrievedAt": "2026-09-16T16:42:00.452Z",
+  "bodyFont": "Candara",
+  "navigationFont": "Segoe UI",
+  "applicationFonts": {
+    "body": "Lato",
+    "navigation": "Lato",
+    "headings": "Poppins"
+  },
+  "websiteSha256": "3858d5f3de56fab42112b1ffb36d79048affa48cd3481433c02791d27044e75d",
+  "stylesheetSha256": "c2e79f2105d8e84f5a4cab980b34135165002fb4e95440674a825a24c21df49e",
+  "note": "Candara and Segoe UI are referenced system fonts, not redistributed font files. Poppins/Lato are linked by the official homepage and downloaded from its Google Fonts URLs.",
+  "fontStylesheets": [
+    "https://fonts.googleapis.com/css?family=Poppins:300,400,500,500i,600,600i,700&display=swap",
+    "https://fonts.googleapis.com/css?family=Lato:300,400,700&display=swap"
+  ],
+  "assets": [
+    {
+      "file": "logo.png",
+      "url": "https://mcciapune.com/static/assets/images/logos/logo-mccia-white-blue-new.png",
+      "bytes": 12760,
+      "sha256": "62bd20d96aee7b44780f142447a9ba669c9cc75b399b8dee46dd2c84e9bb38bc"
+    },
+    {
+      "file": "logo-white.png",
+      "url": "https://mcciapune.com/static/assets/images/logos/logo-mccia-white.png",
+      "bytes": 14697,
+      "sha256": "8524135b872470173b707494f7cd0cf58ed4586c2ea7cc8185e79a17722a1a28"
+    },
+    {
+      "file": "favicon.png",
+      "url": "https://mcciapune.com/static/assets/images/logos/Favicon.png",
+      "bytes": 1332,
+      "sha256": "0441e337b90c88baaa705e33ad4101e11c56f179c39997c90c4f7eac62996b9e"
+    },
+    {
+      "file": "Poppins-OFL.txt",
+      "url": "https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/OFL.txt",
+      "bytes": 4385,
+      "sha256": "6be04893d770899a015649c7aa3b582f871b272f8747a92b78b17c3e5c8b2573"
+    },
+    {
+      "file": "Lato-OFL.txt",
+      "url": "https://raw.githubusercontent.com/google/fonts/main/ofl/lato/OFL.txt",
+      "bytes": 4407,
+      "sha256": "74ba064d03f1f1c4a952da936c3eb71866c34404916734de3cae73b34357e59e"
+    },
+    {
+      "file": "poppins-500-italic.ttf",
+      "url": "https://fonts.gstatic.com/s/poppins/v24/pxiDyp8kv8JHgFVrJJLmg1hVF9eL.ttf",
+      "bytes": 17360,
+      "sha256": "4a01b657ebfa23de41ab586ac12cd4eb3a264a66448269d9bed698ff64ca6e06"
+    },
+    {
+      "file": "poppins-600-italic.ttf",
+      "url": "https://fonts.gstatic.com/s/poppins/v24/pxiDyp8kv8JHgFVrJJLmr19VF9eL.ttf",
+      "bytes": 17296,
+      "sha256": "1722a2e9d27c4f987995771acfea21f2fc3f9836ba5dce66087a7205183d000b"
+    },
+    {
+      "file": "poppins-300-normal.ttf",
+      "url": "https://fonts.gstatic.com/s/poppins/v24/pxiByp8kv8JHgFVrLDz8Z1xlEA.ttf",
+      "bytes": 16172,
+      "sha256": "dbeb32e5ae3eef3ded3cc187bc787c7c0fb8c59ddd49712400d16e77b450184b"
+    },
+    {
+      "file": "poppins-400-normal.ttf",
+      "url": "https://fonts.gstatic.com/s/poppins/v24/pxiEyp8kv8JHgFVrJJfedw.ttf",
+      "bytes": 16148,
+      "sha256": "66807e8e108c648c970aeace0886706f8c95c616f036529a4b628525208f18e8"
+    },
+    {
+      "file": "poppins-500-normal.ttf",
+      "url": "https://fonts.gstatic.com/s/poppins/v24/pxiByp8kv8JHgFVrLGT9Z1xlEA.ttf",
+      "bytes": 16100,
+      "sha256": "9d62ef284ac53a609354be09b50d566bb18c4bb1cb8d63db8ed05d7ef8db1efe"
+    },
+    {
+      "file": "poppins-600-normal.ttf",
+      "url": "https://fonts.gstatic.com/s/poppins/v24/pxiByp8kv8JHgFVrLEj6Z1xlEA.ttf",
+      "bytes": 16044,
+      "sha256": "53eaa58cf4e7fc8d68a3b557ad8f67b8b6613e7431e87a6ca896948c53ef2d35"
+    },
+    {
+      "file": "poppins-700-normal.ttf",
+      "url": "https://fonts.gstatic.com/s/poppins/v24/pxiByp8kv8JHgFVrLCz7Z1xlEA.ttf",
+      "bytes": 15816,
+      "sha256": "884d2cd5ba1b567924c3d174d5cb03f9ad49777bd3c4aa97ce01567acdcdf587"
+    },
+    {
+      "file": "lato-300-normal.ttf",
+      "url": "https://fonts.gstatic.com/s/lato/v25/S6u9w4BMUTPHh7USSwiPHA.ttf",
+      "bytes": 63404,
+      "sha256": "b229d664a58a75e0a438fad204b292b5777e79fafd4b840cce21bac7ad2a7a28"
+    },
+    {
+      "file": "lato-400-normal.ttf",
+      "url": "https://fonts.gstatic.com/s/lato/v25/S6uyw4BMUTPHjx4wWw.ttf",
+      "bytes": 60540,
+      "sha256": "b6e055ad6056d64c89133fd73e9ee935c068d8bd3ac09366d5d99f9eee99e3f4"
+    },
+    {
+      "file": "lato-700-normal.ttf",
+      "url": "https://fonts.gstatic.com/s/lato/v25/S6u9w4BMUTPHh6UVSwiPHA.ttf",
+      "bytes": 59048,
+      "sha256": "7e15d8482756e9d79c5b14dde8cd92256fd2afe0307703d825d4e8178d416c41"
+    }
+  ]
+}
