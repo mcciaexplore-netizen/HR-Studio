@@ -5,9 +5,9 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist/public",
   "functions": {
-    "api/index.ts": {
+    "api/index.js": {
       "maxDuration": 60,
-      "includeFiles": "{dist/excel-worker.cjs,node_modules/@libsql/linux-x64-gnu/**}"
+      "includeFiles": "{dist/vercel.cjs,dist/excel-worker.cjs,node_modules/@libsql/linux-x64-gnu/**}"
     }
   },
   "rewrites": [{ "source": "/api/:path*", "destination": "/api" }],

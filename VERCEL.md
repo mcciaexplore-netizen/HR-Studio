@@ -4,7 +4,7 @@ This is the selected deployment route for the **personal, non-commercial demo**.
 
 ## Architecture and cost
 
-- Vercel serves the built website from `dist/public` and sends `/api/*` to `api/index.ts`.
+- Vercel serves the built website from `dist/public` and sends `/api/*` to `api/index.js`, which loads the bundled server from `dist/vercel.cjs`.
 - The Node.js API connects directly to a remote Turso database using the SQLite-compatible `libsql` driver. Records, uploads and sessions live in Turso, not on Vercel's temporary filesystem.
 - Use **Vercel Hobby** and **Turso Free**. No paid service, trial upgrade or billing add-on is needed for this setup within the free limits. Vercel Hobby is restricted to personal non-commercial use. Turso advertises no card requirement and 5 GB storage on Free; usage quotas still apply.
 
@@ -48,6 +48,8 @@ Import `mcciaexplore-netizen/HR-Studio`, or update the existing project. Use:
 
 `vercel.json` supplies the build output, API rewrite, browser security headers, function duration and Excel worker/native-driver files.
 
+The build bundles the server's TypeScript imports before Vercel runs them. The JavaScript entry uses an explicit `.cjs` path so Node does not attempt to load extensionless source imports. Every build also runs the deployed entry in plain Node without database credentials, checking that it returns the controlled 503 setup response instead of crashing with `ERR_MODULE_NOT_FOUND`.
+
 Set these **server environment variables** in the Vercel project for the intended deployment environment:
 
 | Variable             | Value                                                                                                  |
@@ -79,6 +81,7 @@ npm run test:libsql
 npm run build
 npm run test:production
 npm run test:hosted
+npm run test:vercel
 ```
 
 The libSQL suite runs the same permission, transaction, import/export and persistence tests against the compatible local driver. Additional tests exercise the Vercel handler, missing-secret failures, bulk initialization and rollback. No cloud database or real email is touched by these checks.
