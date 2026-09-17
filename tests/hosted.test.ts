@@ -8,6 +8,7 @@ import { provisionHostedDemo } from "../server/hosted-demo";
 import { createDemoWorkspace } from "../server/demo";
 import { demoAccounts } from "../server/demo-access";
 import { Store } from "../server/store";
+import { releaseNativeStatements } from "./native-cleanup";
 
 test("hosted configuration uses the external HTTPS origin and secure defaults", () => {
   const env = prepareHostedEnvironment({
@@ -70,7 +71,8 @@ test("hosted configuration fails before opening an unsafe or ambiguous database"
 
 function temporaryDatabase(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), "hrstudio-hosted-test-"));
-  t.after(() => {
+  t.after(async () => {
+    await releaseNativeStatements();
     const target = resolve(directory);
     assert.equal(dirname(target), resolve(tmpdir()));
     assert.ok(basename(target).startsWith("hrstudio-hosted-test-"));

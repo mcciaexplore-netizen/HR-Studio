@@ -1,8 +1,12 @@
 # Deploy the full MCCIA HR Studio app
 
-## Prepared configuration
+## Selected: free personal demo on Vercel
 
-`render.yaml` runs the website and its Express API together, with SQLite on a persistent disk. Open the Render service URL for the full app; the existing Vercel deployment publishes only the frontend.
+Follow [VERCEL.md](VERCEL.md) for Vercel Hobby plus Turso Free. This preserves saved records in an external database and adds the Express API to Vercel. The user selected this route for a personal, non-commercial demo. Account setup, database initialization and live verification are required before calling it deployed.
+
+## Alternative: paid server with a persistent disk
+
+`render.yaml` runs the website and its Express API together, with SQLite on a persistent disk. This is an optional paid alternative; it is not used by the selected free Vercel deployment.
 
 | Setting         | Value                                             |
 | --------------- | ------------------------------------------------- |

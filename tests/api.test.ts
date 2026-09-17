@@ -1,4 +1,5 @@
 import { after, test } from 'node:test';
+import { releaseNativeStatements } from './native-cleanup';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -29,7 +30,7 @@ async function fixture(options: Parameters<typeof createApp>[1] = {}) {
     }};
     return c;
   }
-  const f={client,get store(){return store;},async restart(){await stop();store=new Store(filename);await start();},async close(){await stop();const target=resolve(directory);assert.equal(dirname(target),resolve(tmpdir()));assert.ok(basename(target).startsWith('hrstudio-test-'));rmSync(target,{recursive:true,force:true});}};
+  const f={client,get store(){return store;},async restart(){await stop();store=new Store(filename);await start();},async close(){await stop();await releaseNativeStatements();const target=resolve(directory);assert.equal(dirname(target),resolve(tmpdir()));assert.ok(basename(target).startsWith('hrstudio-test-'));rmSync(target,{recursive:true,force:true});}};
   fixtures.push(f); return f;
 }
 after(async()=>{for(const fixture of fixtures) await fixture.close();});

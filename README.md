@@ -95,6 +95,7 @@ SMTP and AI credentials are server-wide in this pilot. A public service would ne
 ```sh
 npm run lint
 npm test
+npm run test:libsql
 npm run build
 npm run test:production
 npm run test:hosted
@@ -119,17 +120,17 @@ For deployment, use Node.js 24.x, put the app behind HTTPS, set `APP_URL`, use s
 
 ### Full app on a persistent server
 
-The prepared [Render deployment](DEPLOYMENT.md) runs the frontend and API in one service, with SQLite on a persistent disk. `render.yaml` selects the existing feature branch and a small paid instance. Review the documented cost before creating the service.
+For the selected **free personal demo**, follow [Vercel + Turso setup](VERCEL.md). The optional [Render deployment](DEPLOYMENT.md) runs the frontend and API in one service, with SQLite on a persistent disk. `render.yaml` selects the existing feature branch and a small paid instance.
 
 `npm run start:hosted` validates the HTTPS origin and absolute private database path, enables secure cookies and defaults to closed registration. With the Blueprint's explicit demo switches, it creates fictional samples only during initial setup and preserves them on later restarts. The hosted smoke test checks that saved records and sessions survive a restart. No local database or environment secrets are uploaded by this configuration.
 
-### Vercel: frontend output and backend requirements
+### Vercel: full API with a remote database
 
 `vercel.json` explicitly selects Vite and publishes **`dist/public`**. The build writes the entry page to `dist/public/index.html`; publishing `dist` instead can leave `/` without an entry page and expose the separately bundled server code. The configuration uses `npm ci`, `npm run build`, and Node.js 24.x (pinned in `package.json`). Deploy the branch containing this configuration. Existing deployment URLs are immutable; open the new deployment after it completes.
 
-This configuration publishes the frontend only. The app also needs the Express `/api` endpoints and its writable SQLite database. Vercel Functions do not provide durable shared filesystem storage for that database. Changing the output directory does **not** make sign-in, demo accounts, payroll or saved records work on Vercel by themselves. Do not put the database under `public`, move it to temporary storage as a persistence workaround, or rewrite API requests to `index.html`.
+`api/index.ts` exports the Express handler without starting a listener. `/api/*` is routed to that function, while browser assets remain static. The API connects directly to Turso using server-only `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`. Run `npm run setup:turso` once against a new empty database to provision fictional samples, then set `DEMO_LOGIN_ENABLED=true` and the exact HTTPS `APP_URL` in Vercel.
 
-For the current complete app, deploy a single Node.js service with a persistent disk, run `npm ci && npm run build` then `npm start`, and set `HOST=0.0.0.0`, `DATABASE_PATH` to the disk's private mounted directory, `APP_URL` to the public HTTPS origin and `COOKIE_SECURE=true`. Alternatively, adapt the backend to a hosted database before moving it into Vercel Functions, or proxy `/api` to a separately hosted persistent backend.
+Vercel never opens a local database file, automatically creates a schema or reseeds samples. Missing credentials or an uninitialized schema result in a safe 503 response. The local server continues to use `node:sqlite` by default. Vercel Hobby is limited to personal, non-commercial projects; see [VERCEL.md](VERCEL.md) for free-tier limits, setup and the required live checks.
 
 If Vercel displays **You Need Access**, sign in with an account authorized for the project. This is separate from application routing; changing the build output does not change deployment protection. Configure server environment variables through the hosting provider; `.env.local` is intentionally excluded from Git.
 

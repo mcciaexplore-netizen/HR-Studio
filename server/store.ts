@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import Libsql from "libsql";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -50,25 +51,65 @@ export class HttpError extends Error {
   }
 }
 
+// Both drivers expose the same synchronous SQLite operations. Remote libSQL
+// executes directly against Turso; there is no local file or replica on Vercel.
+export interface DatabaseConnection {
+  prepare(sql: string): {
+    get(...parameters: any[]): any;
+    all(...parameters: any[]): any[];
+    run(...parameters: any[]): { changes: number | bigint };
+  };
+  exec(sql: string): unknown;
+  close(): unknown;
+}
+export interface StoreOptions {
+  driver?: "node" | "libsql";
+  authToken?: string;
+  migrate?: boolean;
+}
+
 /** A single connection owns short synchronous transactions. No transaction spans an await. */
 export class Store {
-  db: DatabaseSync;
+  db: DatabaseConnection;
   private transactionDepth = 0;
-  constructor(filename: string) {
-    if (filename !== ":memory:")
+  constructor(filename: string, options: StoreOptions = {}) {
+    const remote = /^(libsql|https):\/\//.test(filename);
+    const driver =
+      options.driver ||
+      (process.env.SQLITE_DRIVER === "libsql" ? "libsql" : "node");
+    if (remote && driver !== "libsql")
+      throw new Error("Remote databases require the libsql driver.");
+    if (!remote && filename !== ":memory:")
       mkdirSync(dirname(filename), { recursive: true });
-    this.db = new DatabaseSync(filename);
-    this.db.exec(
-      "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;",
-    );
-    const version = Number(
-      this.db.prepare("PRAGMA user_version").get()!.user_version,
-    );
-    if (version > 3)
-      throw new Error("Database was created by a newer version of HR Studio.");
-    if (version < 1)
-      this.transaction(() => {
-        this.db.exec(`
+    // libsql's published declarations omit authToken, which its remote driver supports.
+    const libsqlOptions = { authToken: options.authToken, timeout: 5000 };
+    this.db =
+      driver === "libsql"
+        ? (new Libsql(filename, libsqlOptions) as DatabaseConnection)
+        : new DatabaseSync(filename);
+    try {
+      this.db.exec(
+        remote
+          ? "PRAGMA foreign_keys=ON;"
+          : "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;",
+      );
+      const version = Number(
+        this.db.prepare("PRAGMA user_version").get()!.user_version,
+      );
+      if (version > 3)
+        throw new Error(
+          "Database was created by a newer version of HR Studio.",
+        );
+      if ((options.migrate ?? !remote) === false) {
+        if (version !== 3)
+          throw new Error(
+            "Database setup is required. Run npm run setup:turso before deploying.",
+          );
+        return;
+      }
+      if (version < 1)
+        this.transaction(() => {
+          this.db.exec(`
         CREATE TABLE organizations(id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, settings TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1);
         CREATE TABLE records(
           org_id TEXT NOT NULL REFERENCES organizations(id), id TEXT NOT NULL, kind TEXT NOT NULL,
@@ -93,10 +134,10 @@ export class Store {
         CREATE INDEX audit_org ON audit(org_id,at);
         PRAGMA user_version=1;
       `);
-      });
-    if (version < 2)
-      this.transaction(() => {
-        this.db.exec(`
+        });
+      if (version < 2)
+        this.transaction(() => {
+          this.db.exec(`
         CREATE UNIQUE INDEX one_payroll_month ON records(org_id,json_extract(data,'$.month')) WHERE kind='payroll';
         CREATE UNIQUE INDEX one_acknowledgement ON records(org_id,json_extract(data,'$.employeeId'),json_extract(data,'$.policyId'),json_extract(data,'$.policyVersion')) WHERE kind='acknowledgements';
         CREATE UNIQUE INDEX unique_branch_code ON records(org_id,lower(json_extract(data,'$.code'))) WHERE kind='branches';
@@ -104,10 +145,10 @@ export class Store {
         CREATE TABLE payroll_expenses(org_id TEXT NOT NULL, expense_id TEXT NOT NULL, payroll_id TEXT NOT NULL, PRIMARY KEY(org_id,expense_id), FOREIGN KEY(org_id,expense_id) REFERENCES records(org_id,id), FOREIGN KEY(org_id,payroll_id) REFERENCES records(org_id,id));
         PRAGMA user_version=2;
       `);
-      });
-    if (version < 3)
-      this.transaction(() => {
-        this.db.exec(`
+        });
+      if (version < 3)
+        this.transaction(() => {
+          this.db.exec(`
           CREATE TABLE demo_access(
             org_id TEXT NOT NULL REFERENCES organizations(id),
             role TEXT NOT NULL CHECK(role IN ('owner','hr','employee')),
@@ -116,7 +157,11 @@ export class Store {
           );
           PRAGMA user_version=3;
         `);
-      });
+        });
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
   }
   transaction<T>(fn: () => T): T {
     const depth = this.transactionDepth,
