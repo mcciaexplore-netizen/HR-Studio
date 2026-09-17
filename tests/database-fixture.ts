@@ -54,7 +54,7 @@ export async function openTestStore(filename = ":memory:") {
     filename === ":memory:" ? undefined : filename + ".pg",
   );
   try {
-    await db.exec(readFileSync(resolve("supabase/schema.sql"), "utf8"));
+    await db.exec(readFileSync(resolve("database/schema.sql"), "utf8"));
     return new Store(db);
   } catch (error) {
     await db.close();

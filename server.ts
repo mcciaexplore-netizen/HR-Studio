@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 import { resolve } from "node:path";
 import { Store } from "./server/store";
-import { openSupabaseStore } from "./server/supabase";
+import { openCloudStore } from "./server/cloud-store";
 import { createApp } from "./server/app";
 import { configuredMailer } from "./server/integrations";
 import { serveClient } from "./server/client";
@@ -9,9 +9,10 @@ dotenv.config({ path: [".env.local", ".env"], quiet: true });
 const production = process.env.NODE_ENV === "production";
 let store: Store | undefined;
 async function start() {
-  store = process.env.SUPABASE_DB_URL
-    ? await openSupabaseStore()
-    : new Store(resolve(process.env.DATABASE_PATH || "var/hrstudio.sqlite"));
+  store =
+    process.env.DATABASE_URL || process.env.SUPABASE_DB_URL
+      ? await openCloudStore()
+      : new Store(resolve(process.env.DATABASE_PATH || "var/hrstudio.sqlite"));
   const app = createApp(store, {
     secureCookies: process.env.COOKIE_SECURE
       ? process.env.COOKIE_SECURE === "true"

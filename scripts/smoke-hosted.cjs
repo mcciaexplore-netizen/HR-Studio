@@ -20,7 +20,9 @@ const assert = require("node:assert/strict");
       cwd: process.cwd(),
       env: {
         ...process.env,
-      SUPABASE_DB_URL: "",
+        DATABASE_URL: "",
+        DATABASE_URL_UNPOOLED: "",
+        SUPABASE_DB_URL: "",
         DATABASE_PATH: join(directory, "qa.sqlite"),
         PORT: String(port),
         HOST: "127.0.0.1",

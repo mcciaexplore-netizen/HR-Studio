@@ -84,50 +84,62 @@ function executorFor(sql: any, nested = false): PostgresExecutor {
   };
 }
 
-export function supabaseConnection(env: NodeJS.ProcessEnv = process.env) {
-  const raw = env.SUPABASE_DB_URL?.trim();
+export function postgresConnection(env: NodeJS.ProcessEnv = process.env) {
+  // DATABASE_URL is the standard Neon/Vercel integration setting. Keep the
+  // previous Supabase setting as a fallback for existing installations only.
+  const primary = env.DATABASE_URL?.trim();
+  const raw = primary || env.SUPABASE_DB_URL?.trim();
   if (!raw)
     throw new Error(
-      "Set SUPABASE_DB_URL to the Supabase transaction pooler connection string.",
+      "Set DATABASE_URL to the Neon pooled PostgreSQL connection string.",
     );
   let url: URL;
+  let username: string;
+  let password: string;
+  let database: string;
   try {
     url = new URL(raw);
+    username = decodeURIComponent(url.username);
+    password = decodeURIComponent(url.password);
+    database = decodeURIComponent(url.pathname.slice(1));
   } catch {
-    throw new Error("SUPABASE_DB_URL must be a PostgreSQL connection string.");
+    throw new Error(
+      "DATABASE_URL must be a valid PostgreSQL connection string.",
+    );
   }
   if (
     !["postgres:", "postgresql:"].includes(url.protocol) ||
-    !url.username ||
-    !url.password ||
-    !url.pathname.slice(1) ||
-    !/\.(supabase\.com|supabase\.co)$/.test(url.hostname) ||
-    url.hash
+    !username ||
+    !password ||
+    !database ||
+    !/\.(neon\.tech|supabase\.com|supabase\.co)$/.test(url.hostname) ||
+    url.hash ||
+    (url.port && Number(url.port) < 1)
   )
     throw new Error(
-      "Use the PostgreSQL connection string from your Supabase project's Connect panel.",
+      "Use the PostgreSQL connection string from Neon or Supabase's Connect panel.",
     );
+  const ca = env.DATABASE_CA || (!primary ? env.SUPABASE_DB_CA : undefined);
   return {
     host: url.hostname,
     port: Number(url.port || 5432),
-    username: decodeURIComponent(url.username),
-    password: decodeURIComponent(url.password),
-    database: decodeURIComponent(url.pathname.slice(1)),
+    username,
+    password,
+    database,
+    // Never let URL parameters disable certificate or hostname verification.
     ssl: {
       rejectUnauthorized: true,
-      ...(env.SUPABASE_DB_CA
-        ? { ca: env.SUPABASE_DB_CA.replace(/\\n/g, "\n") }
-        : {}),
+      ...(ca ? { ca: ca.replace(/\\n/g, "\n") } : {}),
     },
     prepare: false,
     max: 1,
-    connect_timeout: 10,
+    connect_timeout: 15,
     idle_timeout: 20,
     max_lifetime: 300,
     onnotice: () => {},
   };
 }
 
-export function connectSupabaseDatabase(env: NodeJS.ProcessEnv = process.env) {
-  return new PostgresDatabase(executorFor(postgres(supabaseConnection(env))));
+export function connectPostgresDatabase(env: NodeJS.ProcessEnv = process.env) {
+  return new PostgresDatabase(executorFor(postgres(postgresConnection(env))));
 }

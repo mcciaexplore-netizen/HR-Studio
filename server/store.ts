@@ -49,7 +49,7 @@ export class HttpError extends Error {
     super(message);
   }
 }
-/** Both local SQLite and Supabase use the same asynchronous store API. */
+/** Both local SQLite and cloud PostgreSQL use the same asynchronous store API. */
 export class Store {
   db: AsyncDatabase;
   constructor(filename: string | AsyncDatabase) {

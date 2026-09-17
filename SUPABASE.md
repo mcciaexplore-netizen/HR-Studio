@@ -1,11 +1,13 @@
-# Connect HR Studio to Supabase
+# Optional: connect HR Studio to Supabase
+
+The selected deployment now uses **Neon**; follow [NEON.md](NEON.md). This guide remains available for existing Supabase installations.
 
 The cloud backend uses **Supabase PostgreSQL**. The existing HR Studio login, secure cookies and Owner/HR/Employee permissions remain in place. Supabase Auth is not used by this version.
 
-## 1. Create a free project and copy one connection string
+## 1. Open an existing project and copy its connection string
 
-1. Open [Supabase](https://supabase.com/dashboard), create a project on the **Free** plan, and choose Mumbai if available.
-2. Set and save your database password privately. Wait for the project to finish starting.
+1. Open [Supabase](https://supabase.com/dashboard) and select the existing project chosen for HR Studio. A separate project is not required: setup creates the private `hrstudio` schema inside this database.
+2. Confirm the project is running and use its existing database password. Do not reset a shared project password: other connected apps may depend on it. If you do not have the password, ask the project owner to provide the connection privately.
 3. Click **Connect → Transaction pooler** and copy the PostgreSQL URI (normally port **6543**). Replace the password placeholder with your database password. Percent-encode special characters in the password, for example `@` becomes `%40`.
 4. Add the connection string to the ignored `.env.local` file in this repository:
 
@@ -16,6 +18,12 @@ SUPABASE_DB_URL=postgresql://postgres.PROJECT_REF:ENCODED_PASSWORD@YOUR_POOLER_H
 Use the exact host and username shown by your own project. This is a server secret: keep it out of chat, Git, screenshots and any `VITE_*` variable. An anon key, publishable key or service-role key is not a PostgreSQL connection string.
 
 TLS certificate verification is enabled. If the connection needs a custom root certificate, download the PEM certificate from Supabase's database settings and set `SUPABASE_DB_CA` to its contents (literal `\n` line separators are supported). Do not disable certificate verification.
+
+### Sharing a project
+
+HR Studio uses schema-qualified tables under `hrstudio`. Setup does not change the other app's tables, Supabase Auth, or Storage. If `hrstudio` already contains unrelated tables, setup stops and rolls back; choose another existing project rather than deleting those tables. The apps share the project's storage, compute and availability limits.
+
+A separate schema keeps table names apart, but the project's `postgres` credential still has access beyond this schema. Keep that credential only in the local ignored environment file and HR Studio's Vercel server settings. A dedicated database role with access limited to HR Studio is a separate hardening step before using a shared project for real HR records.
 
 ## 2. Create the schema and sample accounts
 
@@ -28,7 +36,7 @@ npm run setup:supabase
 
 This one command creates the private `hrstudio` schema and fictional sample data with Admin, HR and Employee demo accounts. It prepares samples locally and inserts them in a single database transaction. Repeating it preserves existing companies, account changes and records. It does not upload or change your existing local SQLite database.
 
-The reviewed PostgreSQL schema is in [`supabase/schema.sql`](supabase/schema.sql). You can inspect it in advance. Running this file alone in Supabase's SQL Editor creates tables but does **not** create sample accounts; use the command above to complete the demo setup.
+The reviewed PostgreSQL schema is in [`database/schema.sql`](database/schema.sql). You can inspect it in advance. Running this file alone in Supabase's SQL Editor creates tables but does **not** create sample accounts; use the command above to complete the demo setup.
 
 The schema is private, row-level security is enabled, and Supabase's `anon` and `authenticated` roles have no access. Requests go through the existing Express permission checks using the private server connection. Do not expose `hrstudio` in the public Data API or put the database password in browser code.
 
@@ -43,7 +51,7 @@ In **HR Studio → Settings → Environment Variables**, add these for **Product
 | `APP_URL`            | `https://hr-studio-lake.vercel.app`     |
 | `SUPABASE_DB_CA`     | Only if required in step 1              |
 
-Save, then redeploy the latest commit of `feat/mccia-msme-hr-studio`. No frontend API keys are needed. Vercel must use Node **24.x**, build command `npm run build` and output `dist/public`; these are already configured in the repository.
+Save, then redeploy the latest commit of `feat/mccia-msme-hr-studio`. No frontend API keys are needed. Vercel must use Node **24.x**, build command `npm run build:vercel` and output `dist/public`; these are already configured in the repository.
 
 Check `https://hr-studio-lake.vercel.app/api/health` for `{"status":"ok"}`. The login page should show three demo buttons. Try each role, create a fictional asset, reload and confirm it remains. Existing immutable deployment URLs retain their previous code/configuration; use the stable URL above.
 

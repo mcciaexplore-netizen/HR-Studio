@@ -4,6 +4,8 @@ import { once } from "node:events";
 
 // Run with plain Node, without tsx or a development bundler, just like Vercel.
 // Never connect to a real database, including when this runs during a cloud build.
+delete process.env.DATABASE_URL;
+delete process.env.DATABASE_URL_UNPOOLED;
 delete process.env.SUPABASE_DB_URL;
 process.env.APP_URL = "https://demo.example.test";
 
@@ -21,7 +23,7 @@ try {
     assert.equal(response.headers.get("cache-control"), "no-store");
     assert.deepEqual(await response.json(), {
       error:
-        "Supabase is not connected yet. Complete the server database setup and try again.",
+        "The cloud database is not connected yet. Complete the server database setup and try again.",
     });
   }
   console.log(

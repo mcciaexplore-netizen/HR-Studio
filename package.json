@@ -16,8 +16,11 @@
     "test:hosted": "node scripts/smoke-hosted.cjs",
     "test:vercel": "node scripts/smoke-vercel.mjs",
     "lint": "tsc --noEmit",
-    "setup:supabase": "tsx scripts/setup-supabase.ts",
-    "test:postgres": "node scripts/test-postgres.cjs"
+    "setup:supabase": "npm run setup:database",
+    "test:postgres": "node scripts/test-postgres.cjs",
+    "setup:database": "tsx scripts/setup-database.ts",
+    "setup:neon": "npm run setup:database",
+    "build:vercel": "npm run build && npm run setup:database -- --demo-deployment"
   },
   "engines": {
     "node": "24.x"

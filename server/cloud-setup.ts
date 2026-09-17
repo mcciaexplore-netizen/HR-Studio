@@ -15,7 +15,7 @@ const tables = [
   "payroll_expenses",
   "demo_access",
 ];
-export async function initializeSupabaseDemo(target: AsyncDatabase) {
+export async function initializeCloudDemo(target: AsyncDatabase) {
   const sample = new Store(":memory:");
   const data: Array<{ table: string; rows: any[] }> = [];
   try {
@@ -32,7 +32,7 @@ export async function initializeSupabaseDemo(target: AsyncDatabase) {
   return target.transaction(async () => {
     // Serialize two first-time setup runs; ordinary app requests never create schema or seed data.
     await target.exec("SELECT pg_advisory_xact_lock(739214, 1)");
-    await target.exec(readFileSync(resolve("supabase/schema.sql"), "utf8"));
+    await target.exec(readFileSync(resolve("database/schema.sql"), "utf8"));
     if (await target.prepare("SELECT 1 FROM organizations LIMIT 1").get())
       return "Existing workspace preserved; no accounts or demo records were reset.";
     for (const { table, rows } of data) {
@@ -45,6 +45,6 @@ export async function initializeSupabaseDemo(target: AsyncDatabase) {
         .prepare(`INSERT INTO ${table} (${columns.join(",")}) VALUES ${tuples}`)
         .run(...rows.flatMap((row) => columns.map((column) => row[column])));
     }
-    return "Supabase initialized with fictional samples and Admin, HR and Employee demo accounts.";
+    return "Cloud database initialized with fictional samples and Admin, HR and Employee demo accounts.";
   });
 }

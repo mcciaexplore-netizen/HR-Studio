@@ -5,7 +5,7 @@ DO $$
 BEGIN
   IF to_regclass('hrstudio.schema_version') IS NULL THEN
     IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='hrstudio') THEN
-      RAISE EXCEPTION 'The hrstudio schema contains unrelated tables. Use a new Supabase project.';
+      RAISE EXCEPTION 'The hrstudio schema contains unrelated tables. Choose another database without an unrelated hrstudio schema.';
     END IF;
   ELSIF (SELECT version FROM hrstudio.schema_version WHERE id=1) IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'Unsupported HR Studio schema version.';

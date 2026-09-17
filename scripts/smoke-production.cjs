@@ -14,6 +14,8 @@ const ExcelJS = require("exceljs");
     cwd: process.cwd(),
     env: {
       ...process.env,
+      DATABASE_URL: "",
+      DATABASE_URL_UNPOOLED: "",
       SUPABASE_DB_URL: "",
       DATABASE_PATH: join(directory, "qa.sqlite"),
       PORT: String(port),

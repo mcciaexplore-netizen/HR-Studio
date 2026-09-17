@@ -1,6 +1,6 @@
 # HR Studio
 
-HR software for an MSME pilot, built with React, TypeScript, Express, local SQLite and Supabase PostgreSQL. Company workspaces now include employee operations, configurable approvals, imports, work schedules and reviewed payroll for Pune, Maharashtra. See [the implementation guide](IMPLEMENTATION.md) for the complete feature map and remaining boundaries.
+HR software for an MSME pilot, built with React, TypeScript, Express, local SQLite and Neon PostgreSQL. Company workspaces now include employee operations, configurable approvals, imports, work schedules and reviewed payroll for Pune, Maharashtra. See [the implementation guide](IMPLEMENTATION.md) for the complete feature map and remaining boundaries.
 
 ## Run locally
 
@@ -120,7 +120,7 @@ For deployment, use Node.js 24.x, put the app behind HTTPS, set `APP_URL`, use s
 
 ### Full app on a persistent server
 
-For the selected **free personal demo**, follow [Vercel + Supabase setup](VERCEL.md). The optional [Render deployment](DEPLOYMENT.md) runs the frontend and API in one service, with SQLite on a persistent disk. `render.yaml` selects the existing feature branch and a small paid instance.
+For the selected **free personal demo**, follow [Vercel + Neon setup](VERCEL.md). The optional [Render deployment](DEPLOYMENT.md) runs the frontend and API in one service, with SQLite on a persistent disk. `render.yaml` selects the existing feature branch and a small paid instance.
 
 `npm run start:hosted` validates the HTTPS origin and absolute private database path, enables secure cookies and defaults to closed registration. With the Blueprint's explicit demo switches, it creates fictional samples only during initial setup and preserves them on later restarts. The hosted smoke test checks that saved records and sessions survive a restart. No local database or environment secrets are uploaded by this configuration.
 
@@ -128,9 +128,9 @@ For the selected **free personal demo**, follow [Vercel + Supabase setup](VERCEL
 
 `vercel.json` explicitly selects Vite and publishes **`dist/public`**. The build writes the entry page to `dist/public/index.html`; publishing `dist` instead can leave `/` without an entry page and expose the separately bundled server code. The configuration uses `npm ci`, `npm run build`, and Node.js 24.x (pinned in `package.json`). Deploy the branch containing this configuration. Existing deployment URLs are immutable; open the new deployment after it completes.
 
-`api/index.js` loads the built `dist/vercel.cjs` bundle and exports the Express handler without starting a listener. `/api/*` is routed to that function, while browser assets remain static. Each build runs `test:vercel` against this entry in plain Node to catch runtime import failures. The API connects directly to Supabase PostgreSQL using the server-only `SUPABASE_DB_URL`. Follow [the three-step Supabase guide](SUPABASE.md) and run `npm run setup:supabase` once to provision fictional samples, then set `DEMO_LOGIN_ENABLED=true` and the exact HTTPS `APP_URL` in Vercel.
+`api/index.js` loads the built `dist/vercel.cjs` bundle and exports the Express handler without starting a listener. `/api/*` is routed to that function, while browser assets remain static. Each build runs `test:vercel` against this entry in plain Node to catch runtime import failures. The API connects to Neon PostgreSQL using the server-only pooled `DATABASE_URL`. Follow [the Neon guide](NEON.md) and set `DEMO_LOGIN_ENABLED=true` and the exact HTTPS `APP_URL` in Vercel. The configured `build:vercel` command builds the app and runs idempotent demo setup before publishing; manual setup remains available through `npm run setup:database`.
 
-Vercel never opens a local database file, automatically creates a schema or reseeds samples. Missing credentials or an uninitialized schema result in a safe 503 response. The local server uses `node:sqlite` by default and switches to Supabase when `SUPABASE_DB_URL` is set. The existing app login and roles are preserved; Supabase Auth is not used. Vercel Hobby is limited to personal, non-commercial projects; see [VERCEL.md](VERCEL.md) for free-tier limits, setup and the required live checks.
+Vercel API requests never open a local database file, create a schema or reseed samples. The explicit demo deployment setup runs during the build, preserves existing data and blocks publication if it fails. Missing credentials or an uninitialized schema result in a safe 503 response. The local server uses `node:sqlite` by default and switches to cloud PostgreSQL when `DATABASE_URL` is set. The existing app login and roles are preserved; Neon Auth is not used. Legacy `SUPABASE_DB_URL` remains supported when `DATABASE_URL` is absent. Vercel Hobby is limited to personal, non-commercial projects; see [VERCEL.md](VERCEL.md) for free-tier limits, setup and the required live checks.
 
 If Vercel displays **You Need Access**, sign in with an account authorized for the project. This is separate from application routing; changing the build output does not change deployment protection. Configure server environment variables through the hosting provider; `.env.local` is intentionally excluded from Git.
 

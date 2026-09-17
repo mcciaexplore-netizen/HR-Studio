@@ -1,6 +1,6 @@
-# Vercel + Supabase deployment
+# Vercel + Neon deployment
 
-Follow [SUPABASE.md](SUPABASE.md) for the three setup steps: create a free Supabase project, run `npm run setup:supabase`, then add the connection to Vercel and redeploy.
+Follow [NEON.md](NEON.md): create a dedicated free Neon project, connect it to Vercel as `DATABASE_URL`, enable demo login, then redeploy. The Vercel build initializes the demo automatically.
 
 ## Build and routing
 
@@ -8,13 +8,15 @@ Follow [SUPABASE.md](SUPABASE.md) for the three setup steps: create a free Supab
 - Node: **24.x**
 - Framework: **Vite**
 - Install: `npm ci`
-- Build: `npm run build`
+- Build: `npm run build:vercel`
 - Static output: `dist/public`
 - API: `/api/*` is routed to `api/index.js`, which imports `dist/vercel.cjs`.
 
 The build bundles server imports before Vercel runs them. The explicit `.cjs` import avoids Node's extensionless-module startup error. Every build runs `test:vercel` in plain Node with the database secret removed, confirming that the function loads and returns its controlled setup response instead of crashing. The private server bundle and Excel worker are included in the function, outside the public assets directory.
 
-Vercel startup opens Supabase asynchronously and shares initialization between concurrent requests. It validates the existing schema, never creates tables or demo accounts on requests, closes registration and uses secure cookies. Missing configuration returns a safe 503 response. No native database driver package or local database file is deployed for persistence.
+Vercel startup opens Neon PostgreSQL asynchronously and shares initialization between concurrent requests. It validates the existing schema, never creates tables or demo accounts on requests, closes registration and uses secure cookies. Missing configuration returns a safe 503 response. No native database driver package or local database file is deployed for persistence.
+
+The Vercel build finishes the ordinary build and import smoke check, then runs `setup:database -- --demo-deployment`. This requires `DEMO_LOGIN_ENABLED=true` and a valid connection; setup failure blocks publication. Setup uses a transaction, creates only the private `hrstudio` schema, and preserves existing samples, accounts and records on subsequent deployments. Local `npm run build` has no database side effects.
 
 ## Local checks
 
@@ -35,4 +37,4 @@ npm run test:hosted
 4. A fictional change survives a reload and redeployment.
 5. A small import/export and payroll workflow complete against the remote database.
 
-A successful build alone does not prove that the live database is connected. Supabase account setup and credentials must be completed before the app is ready for sign-in.
+A successful build alone does not prove that the live database is connected. Neon account setup and credentials must be completed before the app is ready for sign-in.

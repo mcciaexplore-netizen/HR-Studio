@@ -1,12 +1,13 @@
-import { openSupabaseStore } from "../server/supabase";
+import { openCloudStore } from "../server/cloud-store";
 import dotenv from "dotenv";
 import { resolve } from "node:path";
 import { Store } from "../server/store";
 import { populateDemoSamples } from "../server/demo-samples";
 dotenv.config({ path: [".env.local", ".env"], quiet: true });
-const store = process.env.SUPABASE_DB_URL
-  ? await openSupabaseStore()
-  : new Store(resolve(process.env.DATABASE_PATH || "var/hrstudio.sqlite"));
+const store =
+  process.env.DATABASE_URL || process.env.SUPABASE_DB_URL
+    ? await openCloudStore()
+    : new Store(resolve(process.env.DATABASE_PATH || "var/hrstudio.sqlite"));
 try {
   console.log(JSON.stringify(await populateDemoSamples(store), null, 2));
 } catch (error) {

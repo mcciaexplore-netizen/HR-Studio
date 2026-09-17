@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createApp } from "./app";
 import { configuredMailer } from "./integrations";
-import { openSupabaseStore } from "./supabase";
+import { openCloudStore } from "./cloud-store";
 import type { Store } from "./store";
 
 export function vercelOrigin(env: NodeJS.ProcessEnv) {
@@ -27,7 +27,7 @@ export function vercelOrigin(env: NodeJS.ProcessEnv) {
 
 export function createVercelHandler(
   env: NodeJS.ProcessEnv = process.env,
-  openStore: () => Store | Promise<Store> = () => openSupabaseStore(env),
+  openStore: () => Store | Promise<Store> = () => openCloudStore(env),
 ) {
   let initialization: Promise<ReturnType<typeof createApp>> | undefined;
   async function initialize() {
@@ -57,7 +57,7 @@ export function createVercelHandler(
       return app(req, res);
     } catch {
       console.error(
-        "Vercel API initialization failed. Check Supabase connection and database setup.",
+        "Vercel API initialization failed. Check DATABASE_URL and database setup.",
       );
       res.statusCode = 503;
       res.setHeader("Cache-Control", "no-store");
@@ -65,7 +65,7 @@ export function createVercelHandler(
       return res.end(
         JSON.stringify({
           error:
-            "Supabase is not connected yet. Complete the server database setup and try again.",
+            "The cloud database is not connected yet. Complete the server database setup and try again.",
         }),
       );
     }
