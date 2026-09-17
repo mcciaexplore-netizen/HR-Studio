@@ -4,45 +4,44 @@ import { Store } from "../server/store";
 import { createApp } from "../server/app";
 import { createDemoWorkspace } from "../server/demo";
 import { populateDemoSamples } from "../server/demo-samples";
-
 test("demo sample upgrade is repeatable, preserves passwords and provides an employee payslip", async () => {
   const store = new Store(":memory:");
   try {
     const original = await createDemoWorkspace(store);
-    const before = store.db
+    const before = (await store.db
       .prepare("SELECT password_hash FROM users WHERE email=?")
-      .get(original.email)!.password_hash;
+      .get(original.email))!.password_hash;
     const result = await populateDemoSamples(store);
     assert.deepEqual([...result.roles].sort(), ["employee", "hr", "owner"]);
-    const rowCount = store.db
+    const rowCount = (await store.db
       .prepare("SELECT count(*) AS n FROM records")
-      .get()!.n;
+      .get())!.n;
     assert.equal((await populateDemoSamples(store)).added, false);
     assert.equal(
-      store.db.prepare("SELECT count(*) AS n FROM records").get()!.n,
+      (await store.db.prepare("SELECT count(*) AS n FROM records").get())!.n,
       rowCount,
     );
     assert.equal(
-      store.db
+      (await store.db
         .prepare("SELECT password_hash FROM users WHERE email=?")
-        .get(original.email)!.password_hash,
+        .get(original.email))!.password_hash,
       before,
     );
-    const employee = store.db
+    const employee = (await store.db
       .prepare("SELECT * FROM users WHERE role='employee'")
-      .get()!;
+      .get())!;
     const orgId = String(employee.org_id);
-    assert.equal(store.list(orgId, "employees").length, 8);
-    assert.equal(store.list(orgId, "documents").length, 3);
+    assert.equal((await store.list(orgId, "employees")).length, 8);
+    assert.equal((await store.list(orgId, "documents")).length, 3);
     assert.equal(
-      store
-        .list(orgId, "assets")
-        .filter((a) => a.assignedToId === employee.employee_id).length,
+      (await store.list(orgId, "assets")).filter(
+        (a) => a.assignedToId === employee.employee_id,
+      ).length,
       1,
     );
-    const approved = store
-      .list(orgId, "payroll")
-      .find((p) => p.status === "Approved");
+    const approved = (await store.list(orgId, "payroll")).find(
+      (p) => p.status === "Approved",
+    );
     assert.ok(
       approved.lines.some(
         (line: any) => line.employeeId === employee.employee_id,
@@ -50,12 +49,11 @@ test("demo sample upgrade is repeatable, preserves passwords and provides an emp
     );
     assert.notEqual(approved.submittedBy, approved.approvedBy);
     assert.equal(approved.paymentReference, undefined);
-    assert.equal(store.list(orgId, "profileRequests").length, 1);
+    assert.equal((await store.list(orgId, "profileRequests")).length, 1);
   } finally {
-    store.close();
+    await store.close();
   }
 });
-
 test("demo sign-in is opt-in, scoped to provisioned accounts and preserves employee permissions", async () => {
   const store = new Store(":memory:");
   const servers: ReturnType<ReturnType<typeof createApp>["listen"]>[] = [];
@@ -63,7 +61,7 @@ test("demo sign-in is opt-in, scoped to provisioned accounts and preserves emplo
   try {
     await createDemoWorkspace(store);
     await populateDemoSamples(store);
-    store.db
+    await store.db
       .prepare("INSERT INTO organizations(id,slug,settings) VALUES(?,?,?)")
       .run("other", "other", '{"name":"Private company"}');
     async function start(enabled = false) {
@@ -170,8 +168,8 @@ test("demo sign-in is opt-in, scoped to provisioned accounts and preserves emplo
     ])
       assert.equal((await request(path, {}, sessions.owner)).status, 403);
     assert.equal(sent, 0);
-    assert.equal(store.list("other", "employees").length, 0);
-    store.db.prepare("UPDATE users SET active=0 WHERE role='hr'").run();
+    assert.equal((await store.list("other", "employees")).length, 0);
+    await store.db.prepare("UPDATE users SET active=0 WHERE role='hr'").run();
     assert.equal(
       (await request("/auth/options")).body.demoRoles.includes("hr"),
       false,
@@ -184,17 +182,16 @@ test("demo sign-in is opt-in, scoped to provisioned accounts and preserves emplo
           new Promise<void>((resolve) => server.close(() => resolve())),
       ),
     );
-    store.close();
+    await store.close();
   }
 });
-
 test("ordinary accounts using the demo workspace name cannot opt into public demo access", async () => {
   const store = new Store(":memory:");
   try {
-    store.db
+    await store.db
       .prepare("INSERT INTO organizations(id,slug,settings) VALUES(?,?,?)")
       .run("ordinary", "mccia-demo", "{}");
-    store.db
+    await store.db
       .prepare(
         "INSERT INTO users(id,org_id,name,email,password_hash,role) VALUES(?,?,?,?,?,?)",
       )
@@ -211,14 +208,15 @@ test("ordinary accounts using the demo workspace name cannot opt into public dem
       /Ordinary workspaces cannot/,
     );
     assert.equal(
-      store.db.prepare("SELECT count(*) AS n FROM demo_access").get()!.n,
+      (await store.db.prepare("SELECT count(*) AS n FROM demo_access").get())!
+        .n,
       0,
     );
     assert.equal(
-      store.db.prepare("SELECT count(*) AS n FROM users").get()!.n,
+      (await store.db.prepare("SELECT count(*) AS n FROM users").get())!.n,
       1,
     );
   } finally {
-    store.close();
+    await store.close();
   }
 });

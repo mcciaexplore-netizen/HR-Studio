@@ -1,10 +1,10 @@
+import { mapAsync } from "./async-utils";
 import ExcelJS from "exceljs";
 import { Worker } from "node:worker_threads";
 import { resolve } from "node:path";
 import { Store, HttpError, type Actor } from "./store";
 import { validateRecord, text } from "./validation";
 import { config } from "./suite-domain";
-
 export const employeeColumns = [
   "name",
   "email",
@@ -130,9 +130,13 @@ async function readExcel(buffer: Buffer): Promise<string[][]> {
     excelBusy = false;
   }
 }
-function employeeRow(store: Store, actor: Actor, row: Record<string, string>) {
-  const employees = store.list(actor.orgId, "employees"),
-    branches = store.list(actor.orgId, "branches");
+async function employeeRow(
+  store: Store,
+  actor: Actor,
+  row: Record<string, string>,
+) {
+  const employees = await store.list(actor.orgId, "employees"),
+    branches = await store.list(actor.orgId, "branches");
   const branch = row.branchCode
     ? branches.find(
         (branch) =>
@@ -155,10 +159,8 @@ function employeeRow(store: Store, actor: Actor, row: Record<string, string>) {
       "Manager email does not exist. Import managers first.",
     );
   const customFields = Object.fromEntries(
-    config(store, actor.orgId)
-      .customFields.filter(
-        (field: any) => row[`custom.${field.key}`] !== undefined,
-      )
+    (await config(store, actor.orgId)).customFields
+      .filter((field: any) => row[`custom.${field.key}`] !== undefined)
       .map((field: any) => [
         field.key,
         field.type === "number" && row[`custom.${field.key}`].trim() !== ""
@@ -166,7 +168,7 @@ function employeeRow(store: Store, actor: Actor, row: Record<string, string>) {
           : row[`custom.${field.key}`],
       ]),
   );
-  return validateRecord(store, actor, "employees", {
+  return await validateRecord(store, actor, "employees", {
     ...row,
     avatar: "",
     branchId: branch?.id,
@@ -204,7 +206,7 @@ export async function previewImport(store: Store, actor: Actor, body: any) {
   const headers = rows[0].map((value) => value.trim()),
     allowed = [
       ...employeeColumns,
-      ...config(store, actor.orgId).customFields.map(
+      ...(await config(store, actor.orgId)).customFields.map(
         (field: any) => `custom.${field.key}`,
       ),
     ];
@@ -217,19 +219,20 @@ export async function previewImport(store: Store, actor: Actor, body: any) {
       "Column headers must be unique and match the downloadable template.",
     );
   const seen = new Set(
-    store.list(actor.orgId, "employees").map((emp) => emp.email.toLowerCase()),
+    (await store.list(actor.orgId, "employees")).map((emp) =>
+      emp.email.toLowerCase(),
+    ),
   );
-  const checked = rows
-    .slice(1)
-    .filter((row) => row.some((value) => value.trim()))
-    .map((row, index) => {
+  const checked = await mapAsync(
+    rows.slice(1).filter((row) => row.some((value) => value.trim())),
+    async (row, index) => {
       const input = Object.fromEntries(
         headers.map((header, col) => [header, (row[col] || "").trim()]),
       );
       try {
         if (row.slice(headers.length).some((value) => value.trim()))
           throw new Error("This row has values beyond the column headers.");
-        const employee = employeeRow(store, actor, input);
+        const employee = await employeeRow(store, actor, input);
         if (seen.has(employee.email))
           throw new Error("Duplicate email in the company or this import.");
         seen.add(employee.email);
@@ -237,11 +240,12 @@ export async function previewImport(store: Store, actor: Actor, body: any) {
       } catch (error) {
         return { row: index + 2, input, error: error.message };
       }
-    });
-  const result = store.save(actor, "imports", {
+    },
+  );
+  const result = await store.save(actor, "imports", {
     name: filename,
     createdBy: actor.id,
-    companyVersion: store.company(actor.orgId).version,
+    companyVersion: (await store.company(actor.orgId)).version,
     createdAt: new Date().toISOString(),
     status: "Preview",
     rows: checked,
@@ -254,14 +258,14 @@ export async function previewImport(store: Store, actor: Actor, body: any) {
     count: checked.length,
   };
 }
-export function commitImport(
+export async function commitImport(
   store: Store,
   actor: Actor,
   id: string,
   version: number,
 ) {
-  return store.transaction(() => {
-    const preview = store.get(actor.orgId, "imports", id);
+  return await store.transaction(async () => {
+    const preview = await store.get(actor.orgId, "imports", id);
     if (preview.createdBy !== actor.id)
       throw new HttpError(
         403,
@@ -271,7 +275,7 @@ export function commitImport(
       throw new HttpError(409, "This preview is no longer available.");
     if (
       Date.now() - Date.parse(preview.createdAt) > 3600000 ||
-      preview.companyVersion !== store.company(actor.orgId).version
+      preview.companyVersion !== (await store.company(actor.orgId)).version
     )
       throw new HttpError(
         409,
@@ -283,19 +287,19 @@ export function commitImport(
         "Resolve every row error and upload the corrected file.",
       );
     const existing = new Set(
-      store.list(actor.orgId, "employees").map((emp) => emp.email),
+      (await store.list(actor.orgId, "employees")).map((emp) => emp.email),
     );
     for (const row of preview.rows) {
-      const employee = employeeRow(store, actor, row.input);
+      const employee = await employeeRow(store, actor, row.input);
       if (existing.has(employee.email))
         throw new HttpError(
           409,
           "An email was added after preview. Preview again. No rows were imported.",
         );
       existing.add(employee.email);
-      store.save(actor, "employees", employee);
+      await store.save(actor, "employees", employee);
     }
-    store.save(
+    await store.save(
       actor,
       "imports",
       { ...preview, status: "Committed", rows: [], count: preview.rows.length },

@@ -5,13 +5,12 @@ import { text } from "./validation";
 import { requireModule } from "./suite-domain";
 import { attendanceData } from "./suite-records";
 import { rateLimit } from "./auth";
-
 /** Machine callers use scoped, revocable tokens; browser sessions are not accepted here. */
 export function registerIntegrationEvents(app: Express, store: Store) {
   app.post(
     "/api/integrations/events",
     rateLimit(120, 60000),
-    (req, res, next) => {
+    async (req, res, next) => {
       try {
         const token = req
           .get("authorization")
@@ -19,14 +18,14 @@ export function registerIntegrationEvents(app: Express, store: Store) {
         if (!token)
           throw new HttpError(401, "An integration token is required.");
         const hash = createHash("sha256").update(token).digest("hex");
-        const row = store.db
+        const row = await store.db
           .prepare(
             "SELECT org_id,id FROM records WHERE kind='integrationKeys' AND json_extract(data,'$.tokenHash')=? AND json_extract(data,'$.active')=1",
           )
           .get(hash);
         if (!row)
           throw new HttpError(401, "Integration token is invalid or revoked.");
-        const key = store.get(
+        const key = await store.get(
           String(row.org_id),
           "integrationKeys",
           String(row.id),
@@ -40,10 +39,10 @@ export function registerIntegrationEvents(app: Express, store: Store) {
           employeeId: null,
           mustChangePassword: false,
         };
-        requireModule(store, actor, "integrations");
+        await requireModule(store, actor, "integrations");
         const externalId = `${key.id}:${text(req.body.eventId, "Unique event ID", 100)}`;
         if (
-          store.db
+          await store.db
             .prepare(
               "SELECT 1 FROM integration_events WHERE org_id=? AND external_id=?",
             )
@@ -52,10 +51,10 @@ export function registerIntegrationEvents(app: Express, store: Store) {
           res.json({ ok: true, duplicate: true });
           return;
         }
-        store.transaction(() => {
+        await store.transaction(async () => {
           if (key.scope === "attendance") {
-            requireModule(store, actor, "leaves");
-            const emp = store.get(
+            await requireModule(store, actor, "leaves");
+            const emp = await store.get(
               actor.orgId,
               "employees",
               text(req.body.employeeId, "Employee"),
@@ -82,20 +81,20 @@ export function registerIntegrationEvents(app: Express, store: Store) {
                 400,
                 "Send a completed attendance period of up to 24 hours.",
               );
-            const data = attendanceData(store, actor, {
+            const data = await attendanceData(store, actor, {
               employeeId: emp.id,
               employeeName: emp.name,
               checkInAt: new Date(start).toISOString(),
               checkOutAt: new Date(end).toISOString(),
             });
-            store.save(actor, "attendance", {
+            await store.save(actor, "attendance", {
               ...data,
               source: `Integration: ${key.name}`,
               externalId,
             });
           } else {
-            requireModule(store, actor, "documents");
-            const doc = store.get(
+            await requireModule(store, actor, "documents");
+            const doc = await store.get(
               actor.orgId,
               "documents",
               text(req.body.documentId, "Document"),
@@ -114,7 +113,7 @@ export function registerIntegrationEvents(app: Express, store: Store) {
                 400,
                 "Enter a valid completed signature timestamp.",
               );
-            store.save(
+            await store.save(
               actor,
               "documents",
               {
@@ -131,7 +130,7 @@ export function registerIntegrationEvents(app: Express, store: Store) {
               doc.version,
             );
           }
-          store.db
+          await store.db
             .prepare("INSERT INTO integration_events VALUES(?,?,?)")
             .run(actor.orgId, externalId, new Date().toISOString());
         });

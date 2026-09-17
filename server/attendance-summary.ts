@@ -1,24 +1,21 @@
 import type { Store } from "./store";
-
 /** Shift breaks are deducted once per work date, even when a day has several clock periods. */
-export function attendanceSummary(
+export async function attendanceSummary(
   store: Store,
   orgId: string,
   employeeId: string,
   month?: string,
 ) {
-  const logs = store
-    .list(orgId, "attendance")
-    .filter(
-      (log) =>
-        log.employeeId === employeeId &&
-        (!month || log.date.startsWith(month)) &&
-        log.checkInAt &&
-        log.checkOutAt,
-    );
-  const assignments = store
-    .list(orgId, "shiftAssignments")
-    .filter((row) => row.employeeId === employeeId);
+  const logs = (await store.list(orgId, "attendance")).filter(
+    (log) =>
+      log.employeeId === employeeId &&
+      (!month || log.date.startsWith(month)) &&
+      log.checkInAt &&
+      log.checkOutAt,
+  );
+  const assignments = (await store.list(orgId, "shiftAssignments")).filter(
+    (row) => row.employeeId === employeeId,
+  );
   const grouped = new Map<string, number>();
   for (const log of logs)
     grouped.set(

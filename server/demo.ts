@@ -6,23 +6,20 @@ import { decision, today, validateConfig } from "./suite-domain";
 import { attendanceData, validateSuiteRecord } from "./suite-records";
 import { createPayroll } from "./payroll";
 import { DEMO_SLUG, DEMO_EMAIL } from "./demo-access";
-
 export { DEMO_SLUG, DEMO_EMAIL } from "./demo-access";
-
 /** Explicit provisioning only: CLI or opt-in hosted initialization, never an HTTP route. */
 export async function createDemoWorkspace(store: Store) {
   const password = `Demo!${randomBytes(18).toString("base64url")}`;
   const passwordHash = await hashPassword(password);
-  return store.transaction(() => {
+  return await store.transaction(async () => {
     if (
-      store.db
+      await store.db
         .prepare("SELECT id FROM organizations WHERE slug=?")
         .get(DEMO_SLUG)
     )
       throw new Error(
         "The mccia-demo workspace already exists. No records or credentials were changed.",
       );
-
     const actor: Actor = {
       id: randomUUID(),
       orgId: randomUUID(),
@@ -44,10 +41,10 @@ export async function createDemoWorkspace(store: Store) {
       ],
       leaveTypes: ["Casual", "Sick", "Earned", "Unpaid"],
     });
-    store.db
+    await store.db
       .prepare("INSERT INTO organizations(id,slug,settings) VALUES(?,?,?)")
       .run(actor.orgId, DEMO_SLUG, JSON.stringify(company));
-    const suite = validateConfig(
+    const suite = await validateConfig(
       {
         industry: "Services",
         leavePolicies: company.leaveTypes.map((leaveType) => ({
@@ -63,10 +60,10 @@ export async function createDemoWorkspace(store: Store) {
       store,
       actor,
     );
-    store.db
+    await store.db
       .prepare("UPDATE organizations SET settings=? WHERE id=?")
       .run(JSON.stringify({ ...company, suite }), actor.orgId);
-    store.db
+    await store.db
       .prepare(
         "INSERT INTO users(id,org_id,name,email,password_hash,role) VALUES(?,?,?,?,?,?)",
       )
@@ -78,8 +75,7 @@ export async function createDemoWorkspace(store: Store) {
         passwordHash,
         actor.accessRole,
       );
-
-    const baseDate = today(store, actor.orgId);
+    const baseDate = await today(store, actor.orgId);
     const offsetDate = (offset: number) =>
       new Date(Date.parse(baseDate) + offset * 86400000)
         .toISOString()
@@ -89,16 +85,16 @@ export async function createDemoWorkspace(store: Store) {
         offset++;
       return offsetDate(offset);
     };
-    const add = (kind: Kind, body: any, suiteRecord = false) =>
-      store.save(
+    const add = async (kind: Kind, body: any, suiteRecord = false) =>
+      await store.save(
         actor,
         kind,
         suiteRecord
-          ? validateSuiteRecord(store, actor, kind, body)
-          : validateRecord(store, actor, kind, body),
+          ? await validateSuiteRecord(store, actor, kind, body)
+          : await validateRecord(store, actor, kind, body),
       );
     const branches = [
-      add(
+      await add(
         "branches",
         {
           code: "DEMO-PUNE",
@@ -108,7 +104,7 @@ export async function createDemoWorkspace(store: Store) {
         },
         true,
       ),
-      add(
+      await add(
         "branches",
         {
           code: "DEMO-PCMC",
@@ -119,7 +115,7 @@ export async function createDemoWorkspace(store: Store) {
         true,
       ),
     ];
-    const shift = add(
+    const shift = await add(
       "shifts",
       {
         name: "General shift (Demo)",
@@ -142,7 +138,7 @@ export async function createDemoWorkspace(store: Store) {
     ] as const;
     const employees: any[] = [];
     for (const [index, [name, department, role, basic]] of profiles.entries()) {
-      const employee = add("employees", {
+      const employee = await add("employees", {
         name: `${name} (Demo)`,
         email: index ? `employee${index + 1}@mccia-demo.example` : DEMO_EMAIL,
         department,
@@ -159,7 +155,7 @@ export async function createDemoWorkspace(store: Store) {
         salary: { basic, hra: basic * 0.4, allowances: 2000, deductions: 0 },
       });
       employees.push(employee);
-      add(
+      await add(
         "shiftAssignments",
         {
           employeeId: employee.id,
@@ -171,10 +167,9 @@ export async function createDemoWorkspace(store: Store) {
       );
     }
     actor.employeeId = employees[0].id;
-    store.db
+    await store.db
       .prepare("UPDATE users SET employee_id=? WHERE id=?")
       .run(actor.employeeId, actor.id);
-
     // Completed, fictional clock periods on the five most recent weekdays.
     const workDates: string[] = [];
     for (let offset = -1; workDates.length < 5; offset--) {
@@ -183,24 +178,24 @@ export async function createDemoWorkspace(store: Store) {
     }
     for (const employee of employees)
       for (const day of workDates) {
-        const data = attendanceData(store, actor, {
+        const data = await attendanceData(store, actor, {
           employeeId: employee.id,
           employeeName: employee.name,
           checkInAt: `${day}T09:00:00+05:30`,
           checkOutAt: `${day}T18:00:00+05:30`,
         });
-        store.save(actor, "attendance", {
+        await store.save(actor, "attendance", {
           ...data,
           source: "Fictional demo import",
         });
       }
-    add(
+    await add(
       "holidays",
       { name: "Illustrative company holiday (Demo)", date: nextWeekday(30) },
       true,
     );
     for (const index of [1, 2]) {
-      const leave = add("leaves", {
+      const leave = await add("leaves", {
         employeeId: employees[index].id,
         leaveType: "Casual",
         startDate: nextWeekday(7),
@@ -208,10 +203,10 @@ export async function createDemoWorkspace(store: Store) {
         reason: "Fictional personal leave request for demonstration.",
       });
       if (index === 2)
-        store.save(
+        await store.save(
           actor,
           "leaves",
-          validateRecord(
+          await validateRecord(
             store,
             actor,
             "leaves",
@@ -226,7 +221,7 @@ export async function createDemoWorkspace(store: Store) {
         );
     }
     for (const [index, amount] of [850, 1250, 420].entries()) {
-      const expense = add(
+      const expense = await add(
         "expenses",
         {
           employeeId: employees[index + 1].id,
@@ -238,7 +233,7 @@ export async function createDemoWorkspace(store: Store) {
         true,
       );
       if (index === 1)
-        store.save(
+        await store.save(
           actor,
           "expenses",
           decision(actor, expense, "Approved", "Demo approval; no money paid."),
@@ -246,7 +241,7 @@ export async function createDemoWorkspace(store: Store) {
           expense.version,
         );
     }
-    add(
+    await add(
       "lifecycle",
       {
         employeeId: employees[7].id,
@@ -255,7 +250,7 @@ export async function createDemoWorkspace(store: Store) {
       },
       true,
     );
-    add(
+    await add(
       "policies",
       {
         title: "Demo workspace guide",
@@ -266,7 +261,7 @@ export async function createDemoWorkspace(store: Store) {
       },
       true,
     );
-    add(
+    await add(
       "tickets",
       {
         subject: "Demo: onboarding equipment request",
@@ -279,14 +274,14 @@ export async function createDemoWorkspace(store: Store) {
       "Member Relations Executive (Demo)",
       "Events Coordinator (Demo)",
     ].entries()) {
-      const job = add("jobs", {
+      const job = await add("jobs", {
         title,
         department: index ? "Operations" : "Member Services",
         location: "Pune, Maharashtra",
         type: "Full-time",
       });
       for (const n of [1, 2]) {
-        const candidate = add("candidates", {
+        const candidate = await add("candidates", {
           name: `Demo Candidate ${index * 2 + n}`,
           email: `candidate${index * 2 + n}@mccia-demo.example`,
           jobId: job.id,
@@ -294,10 +289,10 @@ export async function createDemoWorkspace(store: Store) {
             "Fictional candidate profile. Demonstrates interview scheduling and hiring-stage management. No real CV or personal information.",
         });
         if (n === 2)
-          store.save(
+          await store.save(
             actor,
             "candidates",
-            validateRecord(
+            await validateRecord(
               store,
               actor,
               "candidates",
@@ -310,7 +305,7 @@ export async function createDemoWorkspace(store: Store) {
       }
     }
     for (const index of [0, 1, 2])
-      add("assets", {
+      await add("assets", {
         name: `Demo laptop ${index + 1}`,
         serialNumber: `DEMO-LAPTOP-00${index + 1}`,
         category: "Laptop",
@@ -318,7 +313,7 @@ export async function createDemoWorkspace(store: Store) {
         assignedToId: employees[index].id,
         purchaseDate: offsetDate(-90),
       });
-    add("appraisals", {
+    await add("appraisals", {
       employeeId: employees[2].id,
       period: "Demo review",
       selfRating: 4,
@@ -330,7 +325,7 @@ export async function createDemoWorkspace(store: Store) {
     const guide = Buffer.from(
       "DEMO DOCUMENT\nThis is a fictional employee onboarding note for demonstration only. It is not an employment contract or an official MCCIA document.\n",
     );
-    store.save(actor, "documents", {
+    await store.save(actor, "documents", {
       employeeId: employees[7].id,
       name: "Demo-onboarding-note.txt",
       mimeType: "text/plain",
@@ -340,8 +335,8 @@ export async function createDemoWorkspace(store: Store) {
       size: "1 KB",
     });
     if (baseDate >= "2026-01-01")
-      createPayroll(store, actor, { month: baseDate.slice(0, 7) });
-    store.audit(actor, "Created fictional demo workspace", actor.orgId);
+      await createPayroll(store, actor, { month: baseDate.slice(0, 7) });
+    await store.audit(actor, "Created fictional demo workspace", actor.orgId);
     return {
       workspace: DEMO_SLUG,
       email: DEMO_EMAIL,

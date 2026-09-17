@@ -1,3 +1,4 @@
+import { flatMapAsync, mapAsync } from "./async-utils";
 import express, { type Express, type RequestHandler } from "express";
 import { randomBytes, createHash } from "node:crypto";
 import { Store, HttpError, type Actor, type Kind } from "./store";
@@ -35,7 +36,6 @@ import {
   workbookBuffer,
 } from "./import-export";
 import { attendanceSummary } from "./attendance-summary";
-
 const route =
   (fn: (...args: any[]) => any): RequestHandler =>
   (req, res, next) => {
@@ -68,8 +68,7 @@ const safeExpense = (r: any) => ({
   ...r,
   receipt: r.receipt ? metadata(r.receipt) : null,
 });
-
-export function applyEmploymentChange(
+export async function applyEmploymentChange(
   store: Store,
   actor: Actor,
   record: any,
@@ -79,34 +78,34 @@ export function applyEmploymentChange(
   checkVersion(record, { version });
   if (
     record.status !== "Scheduled" ||
-    record.effectiveDate > today(store, actor.orgId)
+    record.effectiveDate > (await today(store, actor.orgId))
   )
     throw new HttpError(
       409,
       "Only a scheduled change that is due can be applied.",
     );
-  const emp = store.get(actor.orgId, "employees", record.employeeId);
+  const emp = await store.get(actor.orgId, "employees", record.employeeId);
   if (emp.version !== record.employeeVersion)
     throw new HttpError(
       409,
       "The employee profile changed after scheduling. Cancel this change and schedule it again after reviewing the latest profile.",
     );
-  return store.transaction(() => {
-    const valid = validateRecord(
+  return await store.transaction(async () => {
+    const valid = await validateRecord(
       store,
       actor,
       "employees",
       { ...emp, ...record.changes },
       emp,
     );
-    store.save(
+    await store.save(
       actor,
       "employees",
       { ...valid, _effectiveDate: record.effectiveDate },
       emp.id,
       emp.version,
     );
-    return store.save(
+    return await store.save(
       actor,
       "employmentChanges",
       {
@@ -120,15 +119,14 @@ export function applyEmploymentChange(
     );
   });
 }
-
 export function registerSuite(app: Express, store: Store) {
   const router = express.Router();
   router.get(
     "/integrations/guide",
-    route((_req, res) => {
+    route(async (_req, res) => {
       const actor: Actor = res.locals.actor;
       staff(actor);
-      requireModule(store, actor, "integrations");
+      await requireModule(store, actor, "integrations");
       res
         .type("text/plain")
         .send(
@@ -138,18 +136,18 @@ export function registerSuite(app: Express, store: Store) {
   );
   router.get(
     "/",
-    route((_req, res) => {
+    route(async (_req, res) => {
       const actor: Actor = res.locals.actor,
         isStaff = actor.accessRole !== "employee",
-        settings = config(store, actor.orgId),
-        employees = store.list(actor.orgId, "employees");
+        settings = await config(store, actor.orgId),
+        employees = await store.list(actor.orgId, "employees");
       const state: any = {};
       for (const kind of suiteKinds) {
         const module = moduleFor[kind];
         let rows =
           module && !settings.enabledModules.includes(module)
             ? []
-            : store.list(actor.orgId, kind);
+            : await store.list(actor.orgId, kind);
         if (kind === "tickets")
           rows = rows.filter((r) => canReadTicket(actor, r));
         else if (kind === "policies")
@@ -187,11 +185,10 @@ export function registerSuite(app: Express, store: Store) {
           rows = rows.filter((r) => r.employeeId === actor.employeeId);
         state[kind] = kind === "expenses" ? rows.map(safeExpense) : rows;
       }
-      state.approvals = requestKinds.flatMap((kind) =>
+      state.approvals = await flatMapAsync(requestKinds, async (kind) =>
         moduleFor[kind] && !settings.enabledModules.includes(moduleFor[kind])
           ? []
-          : store
-              .list(actor.orgId, kind)
+          : (await store.list(actor.orgId, kind))
               .filter((r) => r.status === "Pending" && mayApprove(actor, r))
               .map((r) => ({
                 kind,
@@ -210,35 +207,39 @@ export function registerSuite(app: Express, store: Store) {
         ? employees
         : employees.filter((e) => e.id === actor.employeeId);
       state.attendanceSummary = settings.enabledModules.includes("leaves")
-        ? state.people.flatMap((emp: any) =>
-            attendanceSummary(store, actor.orgId, emp.id).map((day) => ({
-              ...day,
-              employeeName: emp.name,
-            })),
+        ? await flatMapAsync(state.people, async (emp: any) =>
+            (await attendanceSummary(store, actor.orgId, emp.id)).map(
+              (day) => ({
+                ...day,
+                employeeName: emp.name,
+              }),
+            ),
           )
         : [];
       state.accounts = isStaff
-        ? store.db
+        ? await store.db
             .prepare(
               "SELECT id,name,role FROM users WHERE org_id=? AND active=1",
             )
             .all(actor.orgId)
         : [];
-      state.balances = state.people.flatMap((emp: any) =>
-        settings.leavePolicies.map((p: any) => ({
-          employeeId: emp.id,
-          employeeName: emp.name,
-          ...leaveBalance(
-            store,
-            actor.orgId,
-            emp,
-            p.leaveType,
-            today(store, actor.orgId),
-          ),
-        })),
+      state.balances = await flatMapAsync(
+        state.people,
+        async (emp: any) =>
+          await mapAsync(settings.leavePolicies, async (p: any) => ({
+            employeeId: emp.id,
+            employeeName: emp.name,
+            ...(await leaveBalance(
+              store,
+              actor.orgId,
+              emp,
+              p.leaveType,
+              await today(store, actor.orgId),
+            )),
+          })),
       );
       const deadline = new Date(
-        Date.parse(today(store, actor.orgId)) + 30 * 86400000,
+        Date.parse(await today(store, actor.orgId)) + 30 * 86400000,
       )
         .toISOString()
         .slice(0, 10);
@@ -257,8 +258,7 @@ export function registerSuite(app: Express, store: Store) {
       );
       if (settings.enabledModules.includes("documents"))
         state.reminders.push(
-          ...store
-            .list(actor.orgId, "documents")
+          ...(await store.list(actor.orgId, "documents"))
             .filter(
               (doc) =>
                 (isStaff || doc.employeeId === actor.employeeId) &&
@@ -275,70 +275,70 @@ export function registerSuite(app: Express, store: Store) {
         );
       state.integrationKeys =
         actor.accessRole === "owner"
-          ? store
-              .list(actor.orgId, "integrationKeys")
-              .map(({ tokenHash, ...r }) => r)
+          ? (await store.list(actor.orgId, "integrationKeys")).map(
+              ({ tokenHash, ...r }) => r,
+            )
           : [];
       res.json({
         ...state,
         settings,
-        companyVersion: store.company(actor.orgId).version,
+        companyVersion: (await store.company(actor.orgId)).version,
         templates,
         statutorySources,
-        today: today(store, actor.orgId),
+        today: await today(store, actor.orgId),
       });
     }),
   );
   router.patch(
     "/config",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor;
       owner(actor);
-      const company = store.company(actor.orgId);
+      const company = await store.company(actor.orgId);
       checkVersion(company, req.body);
-      const suite = validateConfig(req.body.settings, store, actor),
+      const suite = await validateConfig(req.body.settings, store, actor),
         { id, slug, version, ...settings } = company;
-      store.transaction(() => {
-        store.db
+      await store.transaction(async () => {
+        await store.db
           .prepare(
             "UPDATE organizations SET settings=?,version=version+1 WHERE id=?",
           )
           .run(JSON.stringify({ ...settings, suite }), actor.orgId);
-        store.audit(actor, "Updated HR configuration", actor.orgId);
+        await store.audit(actor, "Updated HR configuration", actor.orgId);
       });
       res.json({ ok: true });
     }),
   );
   router.post(
     "/records/:kind",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor,
         kind = choice(req.params.kind, "record type", suiteKinds) as Kind;
-      if (moduleFor[kind]) requireModule(store, actor, moduleFor[kind]!);
+      if (moduleFor[kind]) await requireModule(store, actor, moduleFor[kind]!);
       res
         .status(201)
         .json(
-          store.save(
+          await store.save(
             actor,
             kind,
-            validateSuiteRecord(store, actor, kind, req.body),
+            await validateSuiteRecord(store, actor, kind, req.body),
           ),
         );
     }),
   );
   router.patch(
     "/records/:kind/:id",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor,
         kind = choice(req.params.kind, "record type", editable) as Kind;
       staff(actor);
-      if (moduleFor[kind]) requireModule(store, actor, moduleFor[kind]!);
-      const existing = store.get(actor.orgId, kind, req.params.id);
+      if (moduleFor[kind]) await requireModule(store, actor, moduleFor[kind]!);
+      const existing = await store.get(actor.orgId, kind, req.params.id);
       res.json(
-        store.save(
+        await store.save(
           actor,
           kind,
-          validateSuiteRecord(
+          await validateSuiteRecord(
             store,
             actor,
             kind,
@@ -353,30 +353,34 @@ export function registerSuite(app: Express, store: Store) {
   );
   router.post(
     "/decisions/:kind/:id",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor,
         kind = choice(req.params.kind, "request type", requestKinds) as Kind;
-      if (moduleFor[kind]) requireModule(store, actor, moduleFor[kind]!);
-      const record = store.get(actor.orgId, kind, req.params.id);
+      if (moduleFor[kind]) await requireModule(store, actor, moduleFor[kind]!);
+      const record = await store.get(actor.orgId, kind, req.params.id);
       checkVersion(record, req.body);
       res.json(
-        store.transaction(() => {
+        await store.transaction(async () => {
           const result =
             kind === "leaves"
-              ? validateRecord(store, actor, kind, req.body, record)
+              ? await validateRecord(store, actor, kind, req.body, record)
               : decision(actor, record, req.body.status, req.body.comment);
           if (result.status === "Approved" && kind === "profileRequests") {
-            const emp = store.get(actor.orgId, "employees", record.employeeId);
+            const emp = await store.get(
+              actor.orgId,
+              "employees",
+              record.employeeId,
+            );
             if (Object.keys(record.changes).length) {
               if (emp.version !== record.employeeVersion)
                 throw new HttpError(
                   409,
                   "The employee profile changed. Reject this request and submit a new one with current details.",
                 );
-              store.save(
+              await store.save(
                 actor,
                 "employees",
-                validateRecord(
+                await validateRecord(
                   store,
                   actor,
                   "employees",
@@ -395,23 +399,21 @@ export function registerSuite(app: Express, store: Store) {
               );
             if (record.type === "Resignation") {
               if (
-                store
-                  .list(actor.orgId, "lifecycle")
-                  .some(
-                    (r) =>
-                      r.employeeId === emp.id &&
-                      r.type === "Offboarding" &&
-                      r.status === "Open",
-                  )
+                (await store.list(actor.orgId, "lifecycle")).some(
+                  (r) =>
+                    r.employeeId === emp.id &&
+                    r.type === "Offboarding" &&
+                    r.status === "Open",
+                )
               )
                 throw new HttpError(
                   409,
                   "An offboarding checklist is already open.",
                 );
-              store.save(
+              await store.save(
                 actor,
                 "lifecycle",
-                lifecycleData(
+                await lifecycleData(
                   store,
                   actor,
                   emp,
@@ -425,8 +427,8 @@ export function registerSuite(app: Express, store: Store) {
             result.status === "Approved" &&
             kind === "attendanceCorrections"
           ) {
-            const log = attendanceData(store, actor, record);
-            store.save(
+            const log = await attendanceData(store, actor, record);
+            await store.save(
               actor,
               "attendance",
               log,
@@ -434,22 +436,28 @@ export function registerSuite(app: Express, store: Store) {
               record.attendanceVersion,
             );
           }
-          return store.save(actor, kind, result, record.id, req.body.version);
+          return await store.save(
+            actor,
+            kind,
+            result,
+            record.id,
+            req.body.version,
+          );
         }),
       );
     }),
   );
   router.post(
     "/cancel/:kind/:id",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor,
         kind = choice(req.params.kind, "request type", requestKinds) as Kind,
-        record = store.get(actor.orgId, kind, req.params.id);
+        record = await store.get(actor.orgId, kind, req.params.id);
       if (record.employeeId !== actor.employeeId) staff(actor);
       if (record.status !== "Pending")
         throw new HttpError(409, "Only pending requests can be cancelled.");
       res.json(
-        store.save(
+        await store.save(
           actor,
           kind,
           { ...record, status: "Cancelled" },
@@ -461,25 +469,25 @@ export function registerSuite(app: Express, store: Store) {
   );
   router.post(
     "/expenses/:id/reimburse",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor;
       staff(actor);
-      requireModule(store, actor, "expenses");
-      const record = store.get(actor.orgId, "expenses", req.params.id);
+      await requireModule(store, actor, "expenses");
+      const record = await store.get(actor.orgId, "expenses", req.params.id);
       if (
         record.status !== "Approved" ||
-        store.db
+        (await store.db
           .prepare(
             "SELECT 1 FROM payroll_expenses WHERE org_id=? AND expense_id=?",
           )
-          .get(actor.orgId, record.id)
+          .get(actor.orgId, record.id))
       )
         throw new HttpError(
           409,
           "This claim is not available for a separate reimbursement.",
         );
       res.json(
-        store.save(
+        await store.save(
           actor,
           "expenses",
           {
@@ -496,10 +504,10 @@ export function registerSuite(app: Express, store: Store) {
   );
   router.get(
     "/expenses/:id/receipt",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor,
-        record = store.get(actor.orgId, "expenses", req.params.id);
-      requireModule(store, actor, "expenses");
+        record = await store.get(actor.orgId, "expenses", req.params.id);
+      await requireModule(store, actor, "expenses");
       if (
         actor.accessRole === "employee" &&
         record.employeeId !== actor.employeeId &&
@@ -518,36 +526,36 @@ export function registerSuite(app: Express, store: Store) {
   );
   router.post(
     "/lifecycle/:id",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor;
       staff(actor);
-      requireModule(store, actor, "lifecycle");
-      const record = store.get(actor.orgId, "lifecycle", req.params.id);
+      await requireModule(store, actor, "lifecycle");
+      const record = await store.get(actor.orgId, "lifecycle", req.params.id);
       checkVersion(record, req.body);
       if (record.status !== "Open")
         throw new HttpError(409, "This checklist is closed.");
       res.json(
-        store.transaction(() => {
+        await store.transaction(async () => {
           if (req.body.action === "Complete") {
             if (record.tasks.some((task: any) => !task.done))
               throw new HttpError(409, "Complete every checklist task first.");
             if (record.type === "Offboarding") {
-              if (record.dueDate > today(store, actor.orgId))
+              if (record.dueDate > (await today(store, actor.orgId)))
                 throw new HttpError(
                   409,
                   "The last working date has not arrived.",
                 );
               if (
-                store
-                  .list(actor.orgId, "assets")
-                  .some((asset) => asset.assignedToId === record.employeeId)
+                (await store.list(actor.orgId, "assets")).some(
+                  (asset) => asset.assignedToId === record.employeeId,
+                )
               )
                 throw new HttpError(
                   409,
                   "Return all assigned assets before completing offboarding.",
                 );
               if (
-                store.db
+                await store.db
                   .prepare(
                     "SELECT 1 FROM users WHERE org_id=? AND employee_id=? AND role='owner'",
                   )
@@ -557,12 +565,12 @@ export function registerSuite(app: Express, store: Store) {
                   409,
                   "The company owner cannot be offboarded.",
                 );
-              const emp = store.get(
+              const emp = await store.get(
                 actor.orgId,
                 "employees",
                 record.employeeId,
               );
-              store.save(
+              await store.save(
                 actor,
                 "employees",
                 {
@@ -574,18 +582,18 @@ export function registerSuite(app: Express, store: Store) {
                 emp.id,
                 emp.version,
               );
-              store.db
+              await store.db
                 .prepare(
                   "DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE org_id=? AND employee_id=?)",
                 )
                 .run(actor.orgId, emp.id);
-              store.db
+              await store.db
                 .prepare(
                   "UPDATE users SET active=0 WHERE org_id=? AND employee_id=?",
                 )
                 .run(actor.orgId, emp.id);
             }
-            return store.save(
+            return await store.save(
               actor,
               "lifecycle",
               {
@@ -602,7 +610,7 @@ export function registerSuite(app: Express, store: Store) {
           );
           if (!task || typeof req.body.done !== "boolean")
             throw new HttpError(400, "Choose a checklist task.");
-          return store.save(
+          return await store.save(
             actor,
             "lifecycle",
             {
@@ -627,16 +635,20 @@ export function registerSuite(app: Express, store: Store) {
   );
   router.post(
     "/employmentChanges/:id",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor;
       staff(actor);
-      requireModule(store, actor, "lifecycle");
-      const record = store.get(actor.orgId, "employmentChanges", req.params.id);
+      await requireModule(store, actor, "lifecycle");
+      const record = await store.get(
+        actor.orgId,
+        "employmentChanges",
+        req.params.id,
+      );
       if (req.body.action === "Cancel") {
         if (record.status !== "Scheduled")
           throw new HttpError(409, "Only scheduled changes can be cancelled.");
         res.json(
-          store.save(
+          await store.save(
             actor,
             "employmentChanges",
             { ...record, status: "Cancelled" },
@@ -645,15 +657,17 @@ export function registerSuite(app: Express, store: Store) {
           ),
         );
       } else
-        res.json(applyEmploymentChange(store, actor, record, req.body.version));
+        res.json(
+          await applyEmploymentChange(store, actor, record, req.body.version),
+        );
     }),
   );
   router.post(
     "/tickets/:id",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor;
-      requireModule(store, actor, "helpdesk");
-      const record = store.get(actor.orgId, "tickets", req.params.id);
+      await requireModule(store, actor, "helpdesk");
+      const record = await store.get(actor.orgId, "tickets", req.params.id);
       if (!canReadTicket(actor, record))
         throw new HttpError(404, "Ticket not found.");
       const comment = text(req.body.comment, "Comment", 5000, true);
@@ -664,11 +678,11 @@ export function registerSuite(app: Express, store: Store) {
         assignedTo = text(req.body.assignedTo, "Assignee", 200, true);
         if (
           assignedTo &&
-          !store.db
+          !(await store.db
             .prepare(
               "SELECT 1 FROM users WHERE id=? AND org_id=? AND active=1 AND role IN ('hr','owner')",
             )
-            .get(assignedTo, actor.orgId)
+            .get(assignedTo, actor.orgId))
         )
           throw new HttpError(400, "Assign an active HR or owner account.");
       }
@@ -687,7 +701,7 @@ export function registerSuite(app: Express, store: Store) {
       )
         throw new HttpError(400, "Add a reply or change the ticket status.");
       res.json(
-        store.save(
+        await store.save(
           actor,
           "tickets",
           {
@@ -713,14 +727,14 @@ export function registerSuite(app: Express, store: Store) {
   );
   router.post(
     "/policies/:id/acknowledge",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor;
-      requireModule(store, actor, "policies");
-      const record = store.get(actor.orgId, "policies", req.params.id);
+      await requireModule(store, actor, "policies");
+      const record = await store.get(actor.orgId, "policies", req.params.id);
       checkVersion(record, req.body);
       const employee =
         actor.employeeId &&
-        store.get(actor.orgId, "employees", actor.employeeId);
+        (await store.get(actor.orgId, "employees", actor.employeeId));
       if (
         !employee ||
         record.status !== "Published" ||
@@ -735,38 +749,36 @@ export function registerSuite(app: Express, store: Store) {
           400,
           "Confirm that you have read and understood this policy.",
         );
-      res
-        .status(201)
-        .json(
-          store.save(actor, "acknowledgements", {
-            employeeId: employee.id,
-            employeeName: employee.name,
-            policyId: record.id,
-            policyVersion: record.revision,
-            title: record.title,
-            contentHash: createHash("sha256")
-              .update(record.content)
-              .digest("hex"),
-            policyText: record.content,
-            at: new Date().toISOString(),
-            by: actor.id,
-          }),
-        );
+      res.status(201).json(
+        await store.save(actor, "acknowledgements", {
+          employeeId: employee.id,
+          employeeName: employee.name,
+          policyId: record.id,
+          policyVersion: record.revision,
+          title: record.title,
+          contentHash: createHash("sha256")
+            .update(record.content)
+            .digest("hex"),
+          policyText: record.content,
+          at: new Date().toISOString(),
+          by: actor.id,
+        }),
+      );
     }),
   );
   router.patch(
     "/documents/:id",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor;
       staff(actor);
-      requireModule(store, actor, "documents");
-      const doc = store.get(actor.orgId, "documents", req.params.id);
+      await requireModule(store, actor, "documents");
+      const doc = await store.get(actor.orgId, "documents", req.params.id);
       const expiryDate = req.body.expiryDate
         ? date(req.body.expiryDate, "Expiry date")
         : "";
       res.json(
         metadata(
-          store.save(
+          await store.save(
             actor,
             "documents",
             { ...doc, expiryDate },
@@ -779,24 +791,24 @@ export function registerSuite(app: Express, store: Store) {
   );
   router.post(
     "/payroll",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor;
       staff(actor);
-      requireModule(store, actor, "payroll");
-      res.status(201).json(createPayroll(store, actor, req.body));
+      await requireModule(store, actor, "payroll");
+      res.status(201).json(await createPayroll(store, actor, req.body));
     }),
   );
   router.patch(
     "/payroll/:id",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor;
       staff(actor);
-      requireModule(store, actor, "payroll");
+      await requireModule(store, actor, "payroll");
       res.json(
-        editPayroll(
+        await editPayroll(
           store,
           actor,
-          store.get(actor.orgId, "payroll", req.params.id),
+          await store.get(actor.orgId, "payroll", req.params.id),
           req.body,
         ),
       );
@@ -804,15 +816,15 @@ export function registerSuite(app: Express, store: Store) {
   );
   router.post(
     "/payroll/:id",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor;
       staff(actor);
-      requireModule(store, actor, "payroll");
+      await requireModule(store, actor, "payroll");
       res.json(
-        payrollAction(
+        await payrollAction(
           store,
           actor,
-          store.get(actor.orgId, "payroll", req.params.id),
+          await store.get(actor.orgId, "payroll", req.params.id),
           req.body,
         ),
       );
@@ -820,10 +832,10 @@ export function registerSuite(app: Express, store: Store) {
   );
   router.get(
     "/payroll/:id/payslip/:employeeId",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor;
-      requireModule(store, actor, "payroll");
-      const period = store.get(actor.orgId, "payroll", req.params.id);
+      await requireModule(store, actor, "payroll");
+      const period = await store.get(actor.orgId, "payroll", req.params.id);
       if (
         !["Approved", "Paid"].includes(period.status) ||
         (actor.accessRole === "employee" &&
@@ -881,10 +893,12 @@ export function registerSuite(app: Express, store: Store) {
   );
   router.post(
     "/imports/:id/commit",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor;
       staff(actor);
-      res.json(commitImport(store, actor, req.params.id, req.body.version));
+      res.json(
+        await commitImport(store, actor, req.params.id, req.body.version),
+      );
     }),
   );
   router.get(
@@ -904,40 +918,41 @@ export function registerSuite(app: Express, store: Store) {
         "policies",
       ]);
       if (!["template", "employees"].includes(type))
-        requireModule(store, actor, "reports");
+        await requireModule(store, actor, "reports");
       let columns: string[] = [],
         rows: any[] = [];
       if (["template", "employees"].includes(type)) {
         columns = [
           ...employeeColumns,
-          ...config(store, actor.orgId).customFields.map(
+          ...(await config(store, actor.orgId)).customFields.map(
             (f: any) => `custom.${f.key}`,
           ),
         ];
         if (type === "employees")
-          rows = store
-            .list(actor.orgId, "employees")
-            .map((e) => ({
+          rows = await mapAsync(
+            await store.list(actor.orgId, "employees"),
+            async (e) => ({
               ...e,
               ...e.salary,
               branchCode:
-                store
-                  .list(actor.orgId, "branches")
-                  .find((b) => b.id === e.branchId)?.code || "",
+                (await store.list(actor.orgId, "branches")).find(
+                  (b) => b.id === e.branchId,
+                )?.code || "",
               managerEmail:
-                store
-                  .list(actor.orgId, "employees")
-                  .find((m) => m.id === e.managerId)?.email || "",
+                (await store.list(actor.orgId, "employees")).find(
+                  (m) => m.id === e.managerId,
+                )?.email || "",
               ...Object.fromEntries(
                 Object.entries(e.customFields || {}).map(([k, v]) => [
                   `custom.${k}`,
                   v,
                 ]),
               ),
-            }));
+            }),
+          );
       } else if (["payroll", "accounting"].includes(type)) {
-        requireModule(store, actor, "payroll");
-        const period = store.get(
+        await requireModule(store, actor, "payroll");
+        const period = await store.get(
           actor.orgId,
           "payroll",
           text(req.query.period, "Payroll period"),
@@ -973,7 +988,7 @@ export function registerSuite(app: Express, store: Store) {
             type
           ] || type;
         if (moduleFor[kind as Kind])
-          requireModule(store, actor, moduleFor[kind as Kind]!);
+          await requireModule(store, actor, moduleFor[kind as Kind]!);
         columns = (
           {
             attendance: [
@@ -1010,7 +1025,7 @@ export function registerSuite(app: Express, store: Store) {
             policies: ["employeeName", "title", "policyVersion", "at"],
           } as any
         )[type];
-        rows = store.list(actor.orgId, kind);
+        rows = await store.list(actor.orgId, kind);
       }
       const bytes = await workbookBuffer(columns, rows, type);
       res
@@ -1023,12 +1038,12 @@ export function registerSuite(app: Express, store: Store) {
   );
   router.post(
     "/integrations/keys",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor;
       owner(actor);
-      requireModule(store, actor, "integrations");
+      await requireModule(store, actor, "integrations");
       const token = randomBytes(32).toString("base64url");
-      const key = store.save(actor, "integrationKeys", {
+      const key = await store.save(actor, "integrationKeys", {
         name: text(req.body.name, "Integration name"),
         scope: choice(req.body.scope, "scope", ["attendance", "signatures"]),
         tokenHash: createHash("sha256").update(token).digest("hex"),
@@ -1040,11 +1055,15 @@ export function registerSuite(app: Express, store: Store) {
   );
   router.post(
     "/integrations/keys/:id/revoke",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor;
       owner(actor);
-      const key = store.get(actor.orgId, "integrationKeys", req.params.id);
-      store.save(
+      const key = await store.get(
+        actor.orgId,
+        "integrationKeys",
+        req.params.id,
+      );
+      await store.save(
         actor,
         "integrationKeys",
         { ...key, active: false },

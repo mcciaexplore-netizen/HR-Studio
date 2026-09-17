@@ -4,8 +4,7 @@ import { once } from "node:events";
 
 // Run with plain Node, without tsx or a development bundler, just like Vercel.
 // Never connect to a real database, including when this runs during a cloud build.
-delete process.env.TURSO_DATABASE_URL;
-delete process.env.TURSO_AUTH_TOKEN;
+delete process.env.SUPABASE_DB_URL;
 process.env.APP_URL = "https://demo.example.test";
 
 const { default: handler } = await import("../api/index.js");
@@ -21,10 +20,15 @@ try {
     assert.match(response.headers.get("content-type"), /application\/json/);
     assert.equal(response.headers.get("cache-control"), "no-store");
     assert.deepEqual(await response.json(), {
-      error: "The demo database is not connected yet. Complete the server setup and try again.",
+      error:
+        "Supabase is not connected yet. Complete the server database setup and try again.",
     });
   }
-  console.log("Vercel smoke passed: deployed entry loads in plain Node and auth routes return the controlled setup response.");
+  console.log(
+    "Vercel smoke passed: deployed entry loads in plain Node and auth routes return the controlled setup response.",
+  );
 } finally {
-  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  await new Promise((resolve, reject) =>
+    server.close((error) => (error ? reject(error) : resolve())),
+  );
 }

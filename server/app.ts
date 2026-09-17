@@ -1,3 +1,4 @@
+import { mapAsync } from "./async-utils";
 import express, { type RequestHandler } from "express";
 import { randomBytes, randomUUID } from "node:crypto";
 import { Store, HttpError, type Actor, type Kind } from "./store";
@@ -28,7 +29,6 @@ import { registerIntegrationEvents } from "./integration-events";
 import { config, requireModule } from "./suite-domain";
 import { moduleFor } from "./suite-records";
 import { demoAccounts, demoRoles, isDemoWorkspace } from "./demo-access";
-
 interface Options {
   secureCookies?: boolean;
   appUrl?: string;
@@ -60,7 +60,6 @@ function loginPassword(value: unknown) {
     throw new HttpError(400, "Enter your password.");
   return value;
 }
-
 export function createApp(store: Store, options: Options = {}) {
   const app = express(),
     secure = !!options.secureCookies;
@@ -91,18 +90,21 @@ export function createApp(store: Store, options: Options = {}) {
   app.use(express.json({ limit: "3mb" }));
   const authLimit = rateLimit(20, 15 * 60 * 1000);
   app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
-  app.get("/api/auth/options", (_req, res) =>
-    res.json({
-      registrationOpen: options.registrationOpen !== false,
-      demoRoles: options.demoLoginEnabled
-        ? demoAccounts(store).map((row) => row.role)
-        : [],
-    }),
+  app.get(
+    "/api/auth/options",
+    route(async (_req, res) =>
+      res.json({
+        registrationOpen: options.registrationOpen !== false,
+        demoRoles: options.demoLoginEnabled
+          ? (await demoAccounts(store)).map((row) => row.role)
+          : [],
+      }),
+    ),
   );
   app.post(
     "/api/auth/demo",
     authLimit,
-    route((req, res) => {
+    route(async (req, res) => {
       if (!options.demoLoginEnabled)
         throw new HttpError(404, "Demo sign-in is unavailable.");
       const role = choice(req.body.role, "demo role", demoRoles);
@@ -111,12 +113,12 @@ export function createApp(store: Store, options: Options = {}) {
           400,
           "Choose a demo role without account or workspace details.",
         );
-      const row = demoAccounts(store).find((row) => row.role === role);
+      const row = (await demoAccounts(store)).find((row) => row.role === role);
       if (!row) throw new HttpError(404, "This demo account is unavailable.");
       const actor = { ...actorFrom(row), demo: true };
-      createSession(store, res, actor.id, secure);
-      store.audit(actor, "Opened demo workspace", actor.orgId);
-      res.json({ user: actor, company: store.company(actor.orgId) });
+      await createSession(store, res, actor.id, secure);
+      await store.audit(actor, "Opened demo workspace", actor.orgId);
+      res.json({ user: actor, company: await store.company(actor.orgId) });
     }),
   );
   app.post(
@@ -144,8 +146,8 @@ export function createApp(store: Store, options: Options = {}) {
         employeeId: null,
         mustChangePassword: false,
       };
-      store.transaction(() => {
-        store.db
+      await store.transaction(async () => {
+        await store.db
           .prepare("INSERT INTO organizations(id,slug,settings) VALUES(?,?,?)")
           .run(
             actor.orgId,
@@ -158,17 +160,17 @@ export function createApp(store: Store, options: Options = {}) {
               currency: "INR",
             }),
           );
-        store.db
+        await store.db
           .prepare(
             "INSERT INTO users(id,org_id,name,email,password_hash,role) VALUES(?,?,?,?,?,?)",
           )
           .run(actor.id, actor.orgId, name, address, hash, "owner");
-        store.audit(actor, "Created company", actor.orgId);
+        await store.audit(actor, "Created company", actor.orgId);
       });
-      createSession(store, res, actor.id, secure);
+      await createSession(store, res, actor.id, secure);
       res
         .status(201)
-        .json({ user: actor, company: store.company(actor.orgId) });
+        .json({ user: actor, company: await store.company(actor.orgId) });
     }),
   );
   app.post(
@@ -178,7 +180,7 @@ export function createApp(store: Store, options: Options = {}) {
       const slug = text(req.body.slug, "Workspace code", 50).toLowerCase(),
         address = email(req.body.email),
         value = loginPassword(req.body.password);
-      const row = store.db
+      const row = await store.db
         .prepare(
           "SELECT u.* FROM users u JOIN organizations o ON o.id=u.org_id WHERE o.slug=? AND u.email=? AND u.active=1",
         )
@@ -192,58 +194,67 @@ export function createApp(store: Store, options: Options = {}) {
       if (!row || !valid)
         throw new HttpError(401, "Workspace, email or password is incorrect.");
       const actor = actorFrom(row);
-      createSession(store, res, actor.id, secure);
-      res.json({ user: actor, company: store.company(actor.orgId) });
+      await createSession(store, res, actor.id, secure);
+      res.json({ user: actor, company: await store.company(actor.orgId) });
     }),
   );
   registerIntegrationEvents(app, store);
   app.use("/api", authenticate(store));
-  app.use("/api", (req, res, next) => {
-    const actor: Actor = res.locals.actor;
-    actor.demo = isDemoWorkspace(store, actor.orgId);
-    const protectedAction =
-      /^\/(auth\/password|users(?:\/|$)|account\/employee|email\/|ai\/|suite\/integrations\/keys)/.test(
-        req.path,
-      );
-    if (
-      actor.demo &&
-      !["GET", "HEAD", "OPTIONS"].includes(req.method) &&
-      protectedAction
-    )
-      return next(
-        new HttpError(
-          403,
-          "Demo accounts use fictional data. Account security changes and external services are unavailable in the demo.",
-        ),
-      );
-    next();
-  });
-  app.get("/api/auth/me", (_req, res) =>
-    res.json({
-      user: res.locals.actor,
-      company: store.company(res.locals.actor.orgId),
+  app.use(
+    "/api",
+    route(async (req, res, next) => {
+      const actor: Actor = res.locals.actor;
+      actor.demo = await isDemoWorkspace(store, actor.orgId);
+      const protectedAction =
+        /^\/(auth\/password|users(?:\/|$)|account\/employee|email\/|ai\/|suite\/integrations\/keys)/.test(
+          req.path,
+        );
+      if (
+        actor.demo &&
+        !["GET", "HEAD", "OPTIONS"].includes(req.method) &&
+        protectedAction
+      )
+        return next(
+          new HttpError(
+            403,
+            "Demo accounts use fictional data. Account security changes and external services are unavailable in the demo.",
+          ),
+        );
+      next();
     }),
   );
-  app.post("/api/auth/logout", (req, res) => {
-    store.db
-      .prepare("DELETE FROM sessions WHERE token_hash=?")
-      .run(digest(cookieToken(req.headers.cookie)));
-    res.clearCookie(SESSION_COOKIE, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure,
-      path: "/",
-    });
-    res.json({ ok: true });
-  });
+  app.get(
+    "/api/auth/me",
+    route(async (_req, res) =>
+      res.json({
+        user: res.locals.actor,
+        company: await store.company(res.locals.actor.orgId),
+      }),
+    ),
+  );
+  app.post(
+    "/api/auth/logout",
+    route(async (req, res) => {
+      await store.db
+        .prepare("DELETE FROM sessions WHERE token_hash=?")
+        .run(digest(cookieToken(req.headers.cookie)));
+      res.clearCookie(SESSION_COOKIE, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure,
+        path: "/",
+      });
+      res.json({ ok: true });
+    }),
+  );
   app.post(
     "/api/auth/password",
     authLimit,
     route(async (req, res) => {
       const actor: Actor = res.locals.actor;
-      const row = store.db
+      const row = (await store.db
         .prepare("SELECT password_hash FROM users WHERE id=?")
-        .get(actor.id)!;
+        .get(actor.id))!;
       if (
         !(await checkPassword(
           loginPassword(req.body.currentPassword),
@@ -255,14 +266,16 @@ export function createApp(store: Store, options: Options = {}) {
       if (next === req.body.currentPassword)
         throw new HttpError(400, "Choose a different password.");
       const hash = await hashPassword(next);
-      store.transaction(() => {
-        store.db
+      await store.transaction(async () => {
+        await store.db
           .prepare("UPDATE users SET password_hash=?,must_change=0 WHERE id=?")
           .run(hash, actor.id);
-        store.db.prepare("DELETE FROM sessions WHERE user_id=?").run(actor.id);
-        store.audit(actor, "Changed password", actor.id);
+        await store.db
+          .prepare("DELETE FROM sessions WHERE user_id=?")
+          .run(actor.id);
+        await store.audit(actor, "Changed password", actor.id);
       });
-      createSession(store, res, actor.id, secure);
+      await createSession(store, res, actor.id, secure);
       res.json({ ok: true });
     }),
   );
@@ -277,31 +290,37 @@ export function createApp(store: Store, options: Options = {}) {
     ),
   );
   registerSuite(app, store);
-  app.use("/api", (req, res, next) => {
-    try {
-      const kind = req.path.match(/^\/records\/([^/]+)/)?.[1] as Kind;
-      const direct = req.path.startsWith("/attendance/")
-        ? "leaves"
-        : req.path.startsWith("/documents")
-          ? "documents"
-          : req.path.startsWith("/email/")
-            ? "emailhub"
-            : req.path.startsWith("/ai/")
-              ? "recruitment"
-              : undefined;
-      const module = moduleFor[kind] || direct;
-      if (module) requireModule(store, res.locals.actor, module);
-      next();
-    } catch (error) {
-      next(error);
-    }
-  });
+  app.use(
+    "/api",
+    route(async (req, res, next) => {
+      try {
+        const kind = req.path.match(/^\/records\/([^/]+)/)?.[1] as Kind;
+        const direct = req.path.startsWith("/attendance/")
+          ? "leaves"
+          : req.path.startsWith("/documents")
+            ? "documents"
+            : req.path.startsWith("/email/")
+              ? "emailhub"
+              : req.path.startsWith("/ai/")
+                ? "recruitment"
+                : undefined;
+        const module = moduleFor[kind] || direct;
+        if (module) await requireModule(store, res.locals.actor, module);
+        next();
+      } catch (error) {
+        next(error);
+      }
+    }),
+  );
   app.get(
     "/api/state",
-    route((_req, res) => {
+    route(async (_req, res) => {
       const actor: Actor = res.locals.actor;
       const state: any = Object.fromEntries(
-        kinds.map((kind) => [kind, store.list(actor.orgId, kind)]),
+        await mapAsync(kinds, async (kind) => [
+          kind,
+          await store.list(actor.orgId, kind),
+        ]),
       );
       const names = new Map(
         state.employees.map((emp: any) => [emp.id, emp.name]),
@@ -333,13 +352,13 @@ export function createApp(store: Store, options: Options = {}) {
           );
         }
       state.documents = state.documents.map(metadata);
-      const suite = config(store, actor.orgId);
+      const suite = await config(store, actor.orgId);
       for (const kind of kinds)
         if (moduleFor[kind] && !suite.enabledModules.includes(moduleFor[kind]))
           state[kind] = [];
       res.json({
         ...state,
-        company: { ...store.company(actor.orgId), suite },
+        company: { ...(await store.company(actor.orgId)), suite },
         user: actor,
         mailConfigured: !!options.mailer,
       });
@@ -348,9 +367,9 @@ export function createApp(store: Store, options: Options = {}) {
   app.patch(
     "/api/company",
     requireOwner,
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor,
-        current = store.company(actor.orgId);
+        current = await store.company(actor.orgId);
       if (current.version !== req.body.version)
         throw new HttpError(
           409,
@@ -359,32 +378,36 @@ export function createApp(store: Store, options: Options = {}) {
       const settings = { ...companySettings(req.body), suite: current.suite };
       if (
         [
-          ...store.list(actor.orgId, "employees"),
-          ...store.list(actor.orgId, "jobs"),
+          ...(await store.list(actor.orgId, "employees")),
+          ...(await store.list(actor.orgId, "jobs")),
         ].some((record) => !settings.departments.includes(record.department))
       )
         throw new HttpError(
           409,
           "A department in use cannot be removed. Update its employees and jobs first.",
         );
-      store.transaction(() => {
-        store.db
+      await store.transaction(async () => {
+        await store.db
           .prepare(
             "UPDATE organizations SET settings=?,version=version+1 WHERE id=?",
           )
           .run(JSON.stringify(settings), actor.orgId);
-        store.audit(actor, "Updated company settings", actor.orgId);
+        await store.audit(actor, "Updated company settings", actor.orgId);
       });
-      res.json(store.company(actor.orgId));
+      res.json(await store.company(actor.orgId));
     }),
   );
-  app.get("/api/users", requireOwner, (_req, res) =>
-    res.json(
-      store.db
-        .prepare(
-          "SELECT id,name,email,role AS accessRole,employee_id AS employeeId,active,must_change AS mustChangePassword FROM users WHERE org_id=? ORDER BY name",
-        )
-        .all(res.locals.actor.orgId),
+  app.get(
+    "/api/users",
+    requireOwner,
+    route(async (_req, res) =>
+      res.json(
+        await store.db
+          .prepare(
+            "SELECT id,name,email,role AS accessRole,employee_id AS employeeId,active,must_change AS mustChangePassword FROM users WHERE org_id=? ORDER BY name",
+          )
+          .all(res.locals.actor.orgId),
+      ),
     ),
   );
   app.post(
@@ -393,7 +416,7 @@ export function createApp(store: Store, options: Options = {}) {
     authLimit,
     route(async (req, res) => {
       const actor: Actor = res.locals.actor,
-        employee = store.get(
+        employee = await store.get(
           actor.orgId,
           "employees",
           text(req.body.employeeId, "Employee"),
@@ -407,8 +430,8 @@ export function createApp(store: Store, options: Options = {}) {
         id = randomUUID();
       const temporaryPassword = randomBytes(18).toString("base64url"),
         hash = await hashPassword(temporaryPassword);
-      store.transaction(() => {
-        store.db
+      await store.transaction(async () => {
+        await store.db
           .prepare(
             "INSERT INTO users(id,org_id,name,email,password_hash,role,employee_id,must_change) VALUES(?,?,?,?,?,?,?,1)",
           )
@@ -421,7 +444,7 @@ export function createApp(store: Store, options: Options = {}) {
             role,
             employee.id,
           );
-        store.audit(actor, "Created account", id);
+        await store.audit(actor, "Created account", id);
       });
       res.status(201).json({ id, email: employee.email, temporaryPassword });
     }),
@@ -429,9 +452,9 @@ export function createApp(store: Store, options: Options = {}) {
   app.patch(
     "/api/users/:id",
     requireOwner,
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor,
-        row = store.db
+        row = await store.db
           .prepare("SELECT * FROM users WHERE id=? AND org_id=?")
           .get(req.params.id, actor.orgId);
       if (!row) throw new HttpError(404, "Account not found.");
@@ -440,12 +463,14 @@ export function createApp(store: Store, options: Options = {}) {
           400,
           "Choose an employee or HR account and a valid account status.",
         );
-      store.transaction(() => {
-        store.db
+      await store.transaction(async () => {
+        await store.db
           .prepare("UPDATE users SET active=? WHERE id=?")
           .run(req.body.active ? 1 : 0, row.id);
-        store.db.prepare("DELETE FROM sessions WHERE user_id=?").run(row.id);
-        store.audit(
+        await store.db
+          .prepare("DELETE FROM sessions WHERE user_id=?")
+          .run(row.id);
+        await store.audit(
           actor,
           req.body.active ? "Enabled account" : "Disabled account",
           String(row.id),
@@ -457,57 +482,61 @@ export function createApp(store: Store, options: Options = {}) {
   app.patch(
     "/api/account/employee",
     requireOwner,
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor,
-        emp = store.get(
+        emp = await store.get(
           actor.orgId,
           "employees",
           text(req.body.employeeId, "Employee"),
         );
-      store.transaction(() => {
-        store.db
+      await store.transaction(async () => {
+        await store.db
           .prepare("UPDATE users SET employee_id=? WHERE id=?")
           .run(emp.id, actor.id);
-        store.audit(actor, "Linked owner profile", emp.id);
+        await store.audit(actor, "Linked owner profile", emp.id);
       });
       res.json({ ok: true });
     }),
   );
-  app.get("/api/audit", requireStaff, (_req, res) =>
-    res.json(
-      store.db
-        .prepare(
-          "SELECT id,actor_name AS actorName,action,entity_id AS entityId,at FROM audit WHERE org_id=? ORDER BY at DESC,rowid DESC LIMIT 200",
-        )
-        .all(res.locals.actor.orgId),
+  app.get(
+    "/api/audit",
+    requireStaff,
+    route(async (_req, res) =>
+      res.json(
+        await store.db
+          .prepare(
+            "SELECT id,actor_name AS actorName,action,entity_id AS entityId,at FROM audit WHERE org_id=? ORDER BY at DESC,id DESC LIMIT 200",
+          )
+          .all(res.locals.actor.orgId),
+      ),
     ),
   );
   app.post(
     "/api/attendance/clock",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor;
       if (!actor.employeeId)
         throw new HttpError(
           400,
           "Link your employee profile in Settings before clocking in.",
         );
-      const emp = store.get(actor.orgId, "employees", actor.employeeId);
+      const emp = await store.get(actor.orgId, "employees", actor.employeeId);
       if (emp.status !== "Active")
         throw new HttpError(
           400,
           "Attendance requires an active employee profile.",
         );
       const action = choice(req.body.action, "clock action", ["in", "out"]);
-      const open = store
-        .list(actor.orgId, "attendance")
-        .find((log) => log.employeeId === emp.id && !log.checkOut);
+      const open = (await store.list(actor.orgId, "attendance")).find(
+        (log) => log.employeeId === emp.id && !log.checkOut,
+      );
       if ((action === "in" && open) || (action === "out" && !open))
         throw new HttpError(
           409,
           "Your attendance changed. Refresh and try again.",
         );
       const now = new Date(),
-        zone = store.company(actor.orgId).timezone;
+        zone = (await store.company(actor.orgId)).timezone;
       const time = now.toLocaleTimeString("en-GB", {
         timeZone: zone,
         hour: "2-digit",
@@ -516,14 +545,14 @@ export function createApp(store: Store, options: Options = {}) {
       });
       res.json(
         open
-          ? store.save(
+          ? await store.save(
               actor,
               "attendance",
               { ...open, checkOut: time, checkOutAt: now.toISOString() },
               open.id,
               open.version,
             )
-          : store.save(actor, "attendance", {
+          : await store.save(actor, "attendance", {
               employeeId: emp.id,
               employeeName: emp.name,
               date: now.toLocaleDateString("en-CA", { timeZone: zone }),
@@ -538,9 +567,9 @@ export function createApp(store: Store, options: Options = {}) {
   app.post(
     "/api/documents",
     requireStaff,
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor,
-        emp = store.get(
+        emp = await store.get(
           actor.orgId,
           "employees",
           text(req.body.employeeId, "Employee"),
@@ -572,7 +601,7 @@ export function createApp(store: Store, options: Options = {}) {
           bytes.subarray(0, 3).toString("hex") !== "ffd8ff")
       )
         throw new HttpError(400, "The file content does not match its type.");
-      const doc = store.save(actor, "documents", {
+      const doc = await store.save(actor, "documents", {
         employeeId: emp.id,
         name,
         mimeType,
@@ -591,9 +620,9 @@ export function createApp(store: Store, options: Options = {}) {
   );
   app.get(
     "/api/documents/:id/download",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor,
-        doc = store.get(actor.orgId, "documents", req.params.id);
+        doc = await store.get(actor.orgId, "documents", req.params.id);
       if (
         actor.accessRole === "employee" &&
         doc.employeeId !== actor.employeeId
@@ -625,7 +654,7 @@ export function createApp(store: Store, options: Options = {}) {
           "Email delivery is not configured. You can still copy or open a draft.",
         );
       const actor: Actor = res.locals.actor,
-        emp = store.get(
+        emp = await store.get(
           actor.orgId,
           "employees",
           text(req.body.employeeId, "Employee"),
@@ -638,7 +667,7 @@ export function createApp(store: Store, options: Options = {}) {
         "Payslip",
         "General Notice",
       ]);
-      const log = store.save(actor, "emailLogs", {
+      const log = await store.save(actor, "emailLogs", {
         employeeId: emp.id,
         employeeName: emp.name,
         recipientEmail: emp.email,
@@ -653,10 +682,10 @@ export function createApp(store: Store, options: Options = {}) {
           recipient: emp.email,
           subject,
           body,
-          companyName: store.company(actor.orgId).name,
+          companyName: (await store.company(actor.orgId)).name,
         });
       } catch {
-        store.save(
+        await store.save(
           actor,
           "emailLogs",
           { ...log, status: "Failed" },
@@ -669,7 +698,7 @@ export function createApp(store: Store, options: Options = {}) {
         );
       }
       res.json(
-        store.save(
+        await store.save(
           actor,
           "emailLogs",
           { ...log, status: "Accepted" },
@@ -685,7 +714,7 @@ export function createApp(store: Store, options: Options = {}) {
     rateLimit(10, 60000),
     route(async (req, res) => {
       const actor: Actor = res.locals.actor,
-        candidate = store.get(
+        candidate = await store.get(
           actor.orgId,
           "candidates",
           text(req.body.candidateId, "Candidate"),
@@ -695,10 +724,10 @@ export function createApp(store: Store, options: Options = {}) {
           400,
           "Add resume text before requesting an evaluation.",
         );
-      const job = store.get(actor.orgId, "jobs", candidate.jobId),
+      const job = await store.get(actor.orgId, "jobs", candidate.jobId),
         result = await evaluateResume(job.title, candidate.resumeText);
       res.json(
-        store.save(
+        await store.save(
           actor,
           "candidates",
           {
@@ -714,7 +743,7 @@ export function createApp(store: Store, options: Options = {}) {
   );
   app.post(
     "/api/records/:kind",
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor,
         kind = choice(req.params.kind, "record type", kinds) as Kind;
       if (actor.accessRole === "employee" && kind !== "leaves")
@@ -722,22 +751,26 @@ export function createApp(store: Store, options: Options = {}) {
       res
         .status(201)
         .json(
-          store.save(actor, kind, validateRecord(store, actor, kind, req.body)),
+          await store.save(
+            actor,
+            kind,
+            await validateRecord(store, actor, kind, req.body),
+          ),
         );
     }),
   );
   app.patch(
     "/api/records/:kind/:id",
     requireStaff,
-    route((req, res) => {
+    route(async (req, res) => {
       const actor: Actor = res.locals.actor,
         kind = choice(req.params.kind, "record type", kinds) as Kind;
-      const existing = store.get(actor.orgId, kind, req.params.id);
+      const existing = await store.get(actor.orgId, kind, req.params.id);
       res.json(
-        store.save(
+        await store.save(
           actor,
           kind,
-          validateRecord(
+          await validateRecord(
             store,
             actor,
             kind,
@@ -753,13 +786,18 @@ export function createApp(store: Store, options: Options = {}) {
   app.delete(
     "/api/records/:kind/:id",
     requireStaff,
-    route((req, res) => {
+    route(async (req, res) => {
       const kind = choice(req.params.kind, "record type", [
         "employees",
         "documents",
         "assets",
       ]) as Kind;
-      store.remove(res.locals.actor, kind, req.params.id, req.body.version);
+      await store.remove(
+        res.locals.actor,
+        kind,
+        req.params.id,
+        req.body.version,
+      );
       res.json({ ok: true });
     }),
   );
@@ -769,16 +807,26 @@ export function createApp(store: Store, options: Options = {}) {
   app.use((error: any, _req: any, res: any, _next: any) => {
     if (error instanceof HttpError)
       return res.status(error.status).json({ error: error.message });
-    if (error.message?.includes("FOREIGN KEY constraint"))
+    if (
+      error.code === "23503" ||
+      error.message?.includes("FOREIGN KEY constraint")
+    )
       return res.status(409).json({
         error:
           "Other records or an account reference this item. Keep the record and change its status instead.",
       });
-    if (error.message?.includes("UNIQUE constraint"))
+    if (error.code === "23505" || error.message?.includes("UNIQUE constraint"))
       return res.status(409).json({
         error:
           "A record with this unique value already exists (workspace, email, asset, branch, payroll month or acknowledgement). Refresh and check existing records.",
       });
+    if (["40001", "40P01"].includes(error.code))
+      return res
+        .status(409)
+        .json({
+          error:
+            "This record changed during another request. Refresh and try again.",
+        });
     if (error.type === "entity.too.large")
       return res.status(413).json({
         error: "The request is too large. Files must be at most 2 MB.",

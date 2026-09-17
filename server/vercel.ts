@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createApp } from "./app";
 import { configuredMailer } from "./integrations";
-import { openTursoStore } from "./turso";
+import { openSupabaseStore } from "./supabase";
 import type { Store } from "./store";
 
 export function vercelOrigin(env: NodeJS.ProcessEnv) {
@@ -27,39 +27,47 @@ export function vercelOrigin(env: NodeJS.ProcessEnv) {
 
 export function createVercelHandler(
   env: NodeJS.ProcessEnv = process.env,
-  openStore: () => Store = () => openTursoStore(env),
+  openStore: () => Store | Promise<Store> = () => openSupabaseStore(env),
 ) {
-  let app: ReturnType<typeof createApp> | undefined;
-  return (req: IncomingMessage, res: ServerResponse) => {
-    if (!app) {
-      let store: Store | undefined;
-      try {
-        const appUrl = vercelOrigin(env);
-        store = openStore();
-        app = createApp(store, {
-          appUrl,
-          secureCookies: true,
-          registrationOpen: false,
-          demoLoginEnabled: env.DEMO_LOGIN_ENABLED === "true",
-          mailer: configuredMailer(),
-        });
-      } catch {
-        store?.close();
-        // Do not expose database URLs, tokens, driver errors or connection strings.
-        console.error(
-          "Vercel API initialization failed. Check database setup and server environment settings.",
-        );
-        res.statusCode = 503;
-        res.setHeader("Cache-Control", "no-store");
-        res.setHeader("Content-Type", "application/json");
-        return res.end(
-          JSON.stringify({
-            error:
-              "The demo database is not connected yet. Complete the server setup and try again.",
-          }),
-        );
-      }
+  let initialization: Promise<ReturnType<typeof createApp>> | undefined;
+  async function initialize() {
+    let store: Store | undefined;
+    try {
+      const appUrl = vercelOrigin(env);
+      store = await openStore();
+      return createApp(store, {
+        appUrl,
+        secureCookies: true,
+        registrationOpen: false,
+        demoLoginEnabled: env.DEMO_LOGIN_ENABLED === "true",
+        mailer: configuredMailer(),
+      });
+    } catch (error) {
+      await store?.close();
+      throw error;
     }
-    return app(req, res);
+  }
+  return async (req: IncomingMessage, res: ServerResponse) => {
+    try {
+      // Concurrent cold-start requests share one connection/setup attempt.
+      const app = await (initialization ??= initialize().catch((error) => {
+        initialization = undefined;
+        throw error;
+      }));
+      return app(req, res);
+    } catch {
+      console.error(
+        "Vercel API initialization failed. Check Supabase connection and database setup.",
+      );
+      res.statusCode = 503;
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Content-Type", "application/json");
+      return res.end(
+        JSON.stringify({
+          error:
+            "Supabase is not connected yet. Complete the server database setup and try again.",
+        }),
+      );
+    }
   };
 }

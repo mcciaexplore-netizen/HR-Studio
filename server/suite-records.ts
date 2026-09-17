@@ -1,7 +1,6 @@
 import { Store, HttpError, type Actor, type Kind } from "./store";
 import { choice, date, number, text, validateRecord } from "./validation";
 import { approvalFor, config, today } from "./suite-domain";
-
 export const moduleFor: Partial<Record<Kind, string>> = {
   leaves: "leaves",
   attendance: "leaves",
@@ -33,8 +32,8 @@ export function owner(actor: Actor) {
   if (actor.accessRole !== "owner")
     throw new HttpError(403, "Owner access is required.");
 }
-export function subject(store: Store, actor: Actor, body: any) {
-  const emp = store.get(
+export async function subject(store: Store, actor: Actor, body: any) {
+  const emp = await store.get(
     actor.orgId,
     "employees",
     text(
@@ -82,14 +81,14 @@ export function attachment(body: any) {
     contentBase64,
   };
 }
-export function lifecycleData(
+export async function lifecycleData(
   store: Store,
   actor: Actor,
   emp: any,
   type: string,
   dueDate: string,
 ) {
-  const settings = config(store, actor.orgId);
+  const settings = await config(store, actor.orgId);
   return {
     employeeId: emp.id,
     employeeName: emp.name,
@@ -106,19 +105,19 @@ export function lifecycleData(
     createdAt: new Date().toISOString(),
   };
 }
-export function validateSuiteRecord(
+export async function validateSuiteRecord(
   store: Store,
   actor: Actor,
   kind: Kind,
   body: any,
   existing?: any,
-): any {
-  const settings = config(store, actor.orgId),
-    list = (kind: Kind) => store.list(actor.orgId, kind);
-  const employee = () => subject(store, actor, body);
-  const branch = () => {
+): Promise<any> {
+  const settings = await config(store, actor.orgId),
+    list = async (kind: Kind) => await store.list(actor.orgId, kind);
+  const employee = async () => await subject(store, actor, body);
+  const branch = async () => {
     const id = text(body.branchId, "Branch", 200, true);
-    if (id) store.get(actor.orgId, "branches", id);
+    if (id) await store.get(actor.orgId, "branches", id);
     return id;
   };
   switch (kind) {
@@ -135,7 +134,7 @@ export function validateSuiteRecord(
       return {
         name: text(body.name, "Holiday name"),
         date: date(body.date, "Holiday date"),
-        branchId: branch(),
+        branchId: await branch(),
       };
     case "shifts": {
       staff(actor);
@@ -158,14 +157,18 @@ export function validateSuiteRecord(
     }
     case "shiftAssignments": {
       staff(actor);
-      const emp = employee(),
-        shift = store.get(actor.orgId, "shifts", text(body.shiftId, "Shift"));
+      const emp = await employee(),
+        shift = await store.get(
+          actor.orgId,
+          "shifts",
+          text(body.shiftId, "Shift"),
+        );
       const startDate = date(body.startDate, "Start date"),
         endDate = date(body.endDate, "End date");
       if (endDate < startDate)
         throw new HttpError(400, "End date must follow start date.");
       if (
-        list(kind).some(
+        (await list(kind)).some(
           (r) =>
             r.id !== existing?.id &&
             r.employeeId === emp.id &&
@@ -188,7 +191,7 @@ export function validateSuiteRecord(
     }
     case "leaveAdjustments": {
       staff(actor);
-      const emp = employee(),
+      const emp = await employee(),
         year = number(body.year, "Year", 2100),
         days = body.days;
       if (
@@ -212,7 +215,7 @@ export function validateSuiteRecord(
         leaveType: choice(
           body.leaveType,
           "leave type",
-          store.company(actor.orgId).leaveTypes,
+          (await store.company(actor.orgId)).leaveTypes,
         ),
         reason: text(body.reason, "Reason", 2000),
         by: actor.name,
@@ -220,10 +223,10 @@ export function validateSuiteRecord(
       };
     }
     case "expenses": {
-      const emp = employee(),
+      const emp = await employee(),
         amount = number(body.amount, "Amount", settings.expenseLimit),
         spentOn = date(body.spentOn, "Expense date");
-      if (amount <= 0 || spentOn > today(store, actor.orgId))
+      if (amount <= 0 || spentOn > (await today(store, actor.orgId)))
         throw new HttpError(
           400,
           "Enter a positive expense amount and a date up to today.",
@@ -238,19 +241,19 @@ export function validateSuiteRecord(
         receipt: attachment(body.receipt),
         currency: "INR",
         status: "Pending",
-        ...approvalFor(store, actor, kind, emp),
+        ...(await approvalFor(store, actor, kind, emp)),
         createdAt: new Date().toISOString(),
       };
     }
     case "lifecycle": {
       staff(actor);
-      const emp = employee(),
+      const emp = await employee(),
         type = choice(body.type, "checklist type", [
           "Onboarding",
           "Offboarding",
         ]);
       if (
-        list(kind).some(
+        (await list(kind)).some(
           (r) =>
             r.employeeId === emp.id && r.type === type && r.status === "Open",
         )
@@ -265,11 +268,11 @@ export function validateSuiteRecord(
           400,
           "The checklist due date cannot precede joining.",
         );
-      return lifecycleData(store, actor, emp, type, dueDate);
+      return await lifecycleData(store, actor, emp, type, dueDate);
     }
     case "employmentChanges": {
       staff(actor);
-      const emp = employee(),
+      const emp = await employee(),
         type = choice(body.type, "change type", [
           "Promotion",
           "Transfer",
@@ -294,7 +297,13 @@ export function validateSuiteRecord(
       );
       if (!Object.keys(changes).length)
         throw new HttpError(400, "Enter the new employment details.");
-      validateRecord(store, actor, "employees", { ...emp, ...changes }, emp);
+      await validateRecord(
+        store,
+        actor,
+        "employees",
+        { ...emp, ...changes },
+        emp,
+      );
       return {
         employeeId: emp.id,
         employeeName: emp.name,
@@ -308,7 +317,7 @@ export function validateSuiteRecord(
       };
     }
     case "profileRequests": {
-      const emp = employee(),
+      const emp = await employee(),
         type = choice(body.type, "request type", [
           "Profile correction",
           "Bank details",
@@ -320,7 +329,13 @@ export function validateSuiteRecord(
         for (const key of ["name", "contact", "email"])
           if (body.changes?.[key] !== undefined)
             changes[key] = body.changes[key];
-        validateRecord(store, actor, "employees", { ...emp, ...changes }, emp);
+        await validateRecord(
+          store,
+          actor,
+          "employees",
+          { ...emp, ...changes },
+          emp,
+        );
       }
       if (type === "Bank details")
         changes.bankDetails = validateBank(body.changes?.bankDetails);
@@ -330,7 +345,7 @@ export function validateSuiteRecord(
           : "";
       if (
         lastWorkingDate &&
-        (lastWorkingDate < today(store, actor.orgId) ||
+        (lastWorkingDate < (await today(store, actor.orgId)) ||
           lastWorkingDate < emp.hireDate)
       )
         throw new HttpError(
@@ -346,11 +361,11 @@ export function validateSuiteRecord(
         reason: text(body.reason, "Request details", 3000),
         employeeVersion: emp.version,
         status: "Pending",
-        ...approvalFor(store, actor, kind, emp),
+        ...(await approvalFor(store, actor, kind, emp)),
       };
     }
     case "attendanceCorrections": {
-      const emp = employee(),
+      const emp = await employee(),
         checkInAt = text(body.checkInAt, "Check-in timestamp", 30),
         checkOutAt = text(body.checkOutAt, "Check-out timestamp", 30),
         start = Date.parse(checkInAt),
@@ -373,7 +388,7 @@ export function validateSuiteRecord(
           true,
         ),
         existing = attendanceId
-          ? store.get(actor.orgId, "attendance", attendanceId)
+          ? await store.get(actor.orgId, "attendance", attendanceId)
           : null;
       if (existing && existing.employeeId !== emp.id)
         throw new HttpError(404, "Attendance not found.");
@@ -386,7 +401,7 @@ export function validateSuiteRecord(
         checkOutAt: new Date(end).toISOString(),
         reason: text(body.reason, "Reason", 2000),
         status: "Pending",
-        ...approvalFor(store, actor, kind, emp),
+        ...(await approvalFor(store, actor, kind, emp)),
       };
     }
     case "tickets": {
@@ -415,7 +430,7 @@ export function validateSuiteRecord(
       return {
         title: text(body.title, "Title"),
         content: text(body.content, "Policy text", 20000),
-        branchId: branch(),
+        branchId: await branch(),
         dueDate: body.dueDate
           ? date(body.dueDate, "Acknowledgement due date")
           : "",
@@ -452,8 +467,8 @@ export function canReadTicket(actor: Actor, ticket: any) {
       (!ticket.confidential || ticket.assignedTo === actor.id))
   );
 }
-export function attendanceData(store: Store, actor: Actor, record: any) {
-  const zone = store.company(actor.orgId).timezone,
+export async function attendanceData(store: Store, actor: Actor, record: any) {
+  const zone = (await store.company(actor.orgId)).timezone,
     start = new Date(record.checkInAt),
     end = new Date(record.checkOutAt);
   const date = start.toLocaleDateString("en-CA", { timeZone: zone }),
@@ -464,12 +479,10 @@ export function attendanceData(store: Store, actor: Actor, record: any) {
         minute: "2-digit",
         hour12: false,
       });
-  const logs = store
-    .list(actor.orgId, "attendance")
-    .filter(
-      (log) =>
-        log.employeeId === record.employeeId && log.id !== record.attendanceId,
-    );
+  const logs = (await store.list(actor.orgId, "attendance")).filter(
+    (log) =>
+      log.employeeId === record.employeeId && log.id !== record.attendanceId,
+  );
   if (
     logs.some(
       (log) =>

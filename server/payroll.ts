@@ -1,8 +1,8 @@
+import { mapAsync, filterAsync } from "./async-utils";
 import { HttpError, Store, type Actor } from "./store";
 import { choice, date, number, text } from "./validation";
 import { today } from "./suite-domain";
 import { attendanceSummary } from "./attendance-summary";
-
 export const payrollRuleVersion = "IN-MH-2026-09-16";
 export const statutorySources = [
   {
@@ -203,9 +203,9 @@ export function calculateLine(
     net,
   };
 }
-function payrollData(store: Store, actor: Actor, body: any) {
+async function payrollData(store: Store, actor: Actor, body: any) {
   const bounds = monthBounds(body.month),
-    currentMonth = today(store, actor.orgId).slice(0, 7);
+    currentMonth = (await today(store, actor.orgId)).slice(0, 7);
   if (bounds.month > currentMonth)
     throw new HttpError(400, "Future payroll periods cannot be processed.");
   if (bounds.month < "2026-01")
@@ -213,18 +213,16 @@ function payrollData(store: Store, actor: Actor, body: any) {
       400,
       "This statutory rule version supports periods from January 2026.",
     );
-  const history = store.list(actor.orgId, "employeeHistory");
-  const employees = store
-    .list(actor.orgId, "employees")
-    .filter(
-      (employee) =>
-        employee.hireDate <= bounds.end &&
-        (employee.status !== "Terminated" || employee.endDate) &&
-        (!employee.endDate || employee.endDate >= bounds.start),
-    );
+  const history = await store.list(actor.orgId, "employeeHistory");
+  const employees = (await store.list(actor.orgId, "employees")).filter(
+    (employee) =>
+      employee.hireDate <= bounds.end &&
+      (employee.status !== "Terminated" || employee.endDate) &&
+      (!employee.endDate || employee.endDate >= bounds.start),
+  );
   if (!employees.length)
     throw new HttpError(400, "No employees are eligible for this period.");
-  const lines = employees.map((employee) => {
+  const lines = await mapAsync(employees, async (employee) => {
     const employeeHistory = history
       .filter((event) => event.employeeId === employee.id)
       .sort(
@@ -263,11 +261,8 @@ function payrollData(store: Store, actor: Actor, body: any) {
       for (const key of Object.keys(sums))
         sums[key] += paise(historical.salary[key] || 0) / bounds.days;
     }
-    const attendanceDays = attendanceSummary(
-      store,
-      actor.orgId,
-      employee.id,
-      bounds.month,
+    const attendanceDays = (
+      await attendanceSummary(store, actor.orgId, employee.id, bounds.month)
     ).filter(
       (day) =>
         day.date >= employee.hireDate &&
@@ -319,8 +314,7 @@ function payrollData(store: Store, actor: Actor, body: any) {
           ? "No dated salary history exists for this employee; verify the period earnings against prior payroll records."
           : "",
     };
-    const unpaid = store
-      .list(actor.orgId, "leaves")
+    const unpaid = (await store.list(actor.orgId, "leaves"))
       .filter(
         (leave) =>
           leave.employeeId === employee.id &&
@@ -341,7 +335,7 @@ function payrollData(store: Store, actor: Actor, body: any) {
     createdBy: actor.id,
     createdAt: new Date().toISOString(),
     companySnapshot: {
-      name: store.company(actor.orgId).name,
+      name: (await store.company(actor.orgId)).name,
       location: "Pune, Maharashtra",
       currency: "INR",
     },
@@ -351,10 +345,14 @@ function payrollData(store: Store, actor: Actor, body: any) {
     history: [],
   };
 }
-export function createPayroll(store: Store, actor: Actor, body: any) {
-  return store.save(actor, "payroll", payrollData(store, actor, body));
+export async function createPayroll(store: Store, actor: Actor, body: any) {
+  return await store.save(
+    actor,
+    "payroll",
+    await payrollData(store, actor, body),
+  );
 }
-export function editPayroll(
+export async function editPayroll(
   store: Store,
   actor: Actor,
   period: any,
@@ -375,7 +373,7 @@ export function editPayroll(
     body.input,
     line.reimbursement,
   );
-  return store.save(
+  return await store.save(
     actor,
     "payroll",
     {
@@ -388,7 +386,7 @@ export function editPayroll(
     body.version,
   );
 }
-export function payrollAction(
+export async function payrollAction(
   store: Store,
   actor: Actor,
   period: any,
@@ -403,16 +401,16 @@ export function payrollAction(
     "Refresh earnings",
   ]);
   const now = new Date().toISOString();
-  return store.transaction(() => {
+  return await store.transaction(async () => {
     if (action === "Refresh earnings") {
       if (period.status !== "Draft")
         throw new HttpError(409, "Only draft earnings can be refreshed.");
-      return store.save(
+      return await store.save(
         actor,
         "payroll",
         {
           ...period,
-          ...payrollData(store, actor, { month: period.month }),
+          ...(await payrollData(store, actor, { month: period.month })),
           createdBy: period.createdBy,
           createdAt: period.createdAt,
           history: [...period.history, { action, by: actor.name, at: now }],
@@ -430,19 +428,18 @@ export function payrollAction(
       const eligible = new Set(
         period.lines.map((line: any) => line.employeeId),
       );
-      const expenses = store
-        .list(actor.orgId, "expenses")
-        .filter(
-          (expense) =>
-            expense.status === "Approved" &&
-            eligible.has(expense.employeeId) &&
-            !store.db
-              .prepare(
-                "SELECT 1 FROM payroll_expenses WHERE org_id=? AND expense_id=?",
-              )
-              .get(actor.orgId, expense.id),
-        );
-      return store.save(
+      const expenses = await filterAsync(
+        await store.list(actor.orgId, "expenses"),
+        async (expense) =>
+          expense.status === "Approved" &&
+          eligible.has(expense.employeeId) &&
+          !(await store.db
+            .prepare(
+              "SELECT 1 FROM payroll_expenses WHERE org_id=? AND expense_id=?",
+            )
+            .get(actor.orgId, expense.id)),
+      );
+      return await store.save(
         actor,
         "payroll",
         {
@@ -496,14 +493,14 @@ export function payrollAction(
           "Payroll needs a different reviewer from the person who submitted it.",
         );
       for (const id of period.expenseIds) {
-        const expense = store.get(actor.orgId, "expenses", id);
+        const expense = await store.get(actor.orgId, "expenses", id);
         if (expense.status !== "Approved")
           throw new HttpError(
             409,
             "An included expense is no longer approved. Return and refresh the draft.",
           );
         if (
-          store.db
+          await store.db
             .prepare(
               "SELECT 1 FROM payroll_expenses WHERE org_id=? AND expense_id=?",
             )
@@ -513,7 +510,7 @@ export function payrollAction(
             409,
             "An expense was already included in another approved period.",
           );
-        store.db
+        await store.db
           .prepare("INSERT INTO payroll_expenses VALUES(?,?,?)")
           .run(actor.orgId, id, period.id);
       }
@@ -540,8 +537,8 @@ export function payrollAction(
         paidAt: now,
       };
       for (const id of period.expenseIds) {
-        const expense = store.get(actor.orgId, "expenses", id);
-        store.save(
+        const expense = await store.get(actor.orgId, "expenses", id);
+        await store.save(
           actor,
           "expenses",
           {
@@ -564,6 +561,6 @@ export function payrollAction(
         note: text(body.note, "Note", 2000, true),
       },
     ];
-    return store.save(actor, "payroll", period, period.id, body.version);
+    return await store.save(actor, "payroll", period, period.id, body.version);
   });
 }

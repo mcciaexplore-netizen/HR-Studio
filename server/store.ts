@@ -1,9 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
-import Libsql from "libsql";
+import { SQLiteDatabase, type AsyncDatabase } from "./database";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
-
 export type AccessRole = "owner" | "hr" | "employee";
 export interface Actor {
   id: string;
@@ -50,66 +49,30 @@ export class HttpError extends Error {
     super(message);
   }
 }
-
-// Both drivers expose the same synchronous SQLite operations. Remote libSQL
-// executes directly against Turso; there is no local file or replica on Vercel.
-export interface DatabaseConnection {
-  prepare(sql: string): {
-    get(...parameters: any[]): any;
-    all(...parameters: any[]): any[];
-    run(...parameters: any[]): { changes: number | bigint };
-  };
-  exec(sql: string): unknown;
-  close(): unknown;
-}
-export interface StoreOptions {
-  driver?: "node" | "libsql";
-  authToken?: string;
-  migrate?: boolean;
-}
-
-/** A single connection owns short synchronous transactions. No transaction spans an await. */
+/** Both local SQLite and Supabase use the same asynchronous store API. */
 export class Store {
-  db: DatabaseConnection;
-  private transactionDepth = 0;
-  constructor(filename: string, options: StoreOptions = {}) {
-    const remote = /^(libsql|https):\/\//.test(filename);
-    const driver =
-      options.driver ||
-      (process.env.SQLITE_DRIVER === "libsql" ? "libsql" : "node");
-    if (remote && driver !== "libsql")
-      throw new Error("Remote databases require the libsql driver.");
-    if (!remote && filename !== ":memory:")
+  db: AsyncDatabase;
+  constructor(filename: string | AsyncDatabase) {
+    if (typeof filename !== "string") {
+      this.db = filename;
+      return;
+    }
+    if (filename !== ":memory:")
       mkdirSync(dirname(filename), { recursive: true });
-    // libsql's published declarations omit authToken, which its remote driver supports.
-    const libsqlOptions = { authToken: options.authToken, timeout: 5000 };
-    this.db =
-      driver === "libsql"
-        ? (new Libsql(filename, libsqlOptions) as DatabaseConnection)
-        : new DatabaseSync(filename);
+    const db = new DatabaseSync(filename);
     try {
-      this.db.exec(
-        remote
-          ? "PRAGMA foreign_keys=ON;"
-          : "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;",
+      db.exec(
+        "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;",
       );
       const version = Number(
-        this.db.prepare("PRAGMA user_version").get()!.user_version,
+        db.prepare("PRAGMA user_version").get()!.user_version,
       );
       if (version > 3)
         throw new Error(
           "Database was created by a newer version of HR Studio.",
         );
-      if ((options.migrate ?? !remote) === false) {
-        if (version !== 3)
-          throw new Error(
-            "Database setup is required. Run npm run setup:turso before deploying.",
-          );
-        return;
-      }
       if (version < 1)
-        this.transaction(() => {
-          this.db.exec(`
+        db.exec(`BEGIN IMMEDIATE;
         CREATE TABLE organizations(id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, settings TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1);
         CREATE TABLE records(
           org_id TEXT NOT NULL REFERENCES organizations(id), id TEXT NOT NULL, kind TEXT NOT NULL,
@@ -133,22 +96,18 @@ export class Store {
           actor_name TEXT NOT NULL, action TEXT NOT NULL, entity_id TEXT NOT NULL, at TEXT NOT NULL);
         CREATE INDEX audit_org ON audit(org_id,at);
         PRAGMA user_version=1;
-      `);
-        });
+      COMMIT;`);
       if (version < 2)
-        this.transaction(() => {
-          this.db.exec(`
+        db.exec(`BEGIN IMMEDIATE;
         CREATE UNIQUE INDEX one_payroll_month ON records(org_id,json_extract(data,'$.month')) WHERE kind='payroll';
         CREATE UNIQUE INDEX one_acknowledgement ON records(org_id,json_extract(data,'$.employeeId'),json_extract(data,'$.policyId'),json_extract(data,'$.policyVersion')) WHERE kind='acknowledgements';
         CREATE UNIQUE INDEX unique_branch_code ON records(org_id,lower(json_extract(data,'$.code'))) WHERE kind='branches';
         CREATE TABLE integration_events(org_id TEXT NOT NULL, external_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(org_id,external_id));
         CREATE TABLE payroll_expenses(org_id TEXT NOT NULL, expense_id TEXT NOT NULL, payroll_id TEXT NOT NULL, PRIMARY KEY(org_id,expense_id), FOREIGN KEY(org_id,expense_id) REFERENCES records(org_id,id), FOREIGN KEY(org_id,payroll_id) REFERENCES records(org_id,id));
         PRAGMA user_version=2;
-      `);
-        });
+      COMMIT;`);
       if (version < 3)
-        this.transaction(() => {
-          this.db.exec(`
+        db.exec(`BEGIN IMMEDIATE;
           CREATE TABLE demo_access(
             org_id TEXT NOT NULL REFERENCES organizations(id),
             role TEXT NOT NULL CHECK(role IN ('owner','hr','employee')),
@@ -156,34 +115,20 @@ export class Store {
             PRIMARY KEY(org_id,role)
           );
           PRAGMA user_version=3;
-        `);
-        });
+        COMMIT;`);
+      this.db = new SQLiteDatabase(db);
     } catch (error) {
-      this.db.close();
+      db.close();
       throw error;
     }
   }
-  transaction<T>(fn: () => T): T {
-    const depth = this.transactionDepth,
-      savepoint = `nested_${depth}`;
-    this.db.exec(depth ? `SAVEPOINT ${savepoint}` : "BEGIN IMMEDIATE");
-    this.transactionDepth++;
-    try {
-      const result = fn();
-      this.db.exec(depth ? `RELEASE ${savepoint}` : "COMMIT");
-      return result;
-    } catch (error) {
-      this.db.exec(depth ? `ROLLBACK TO ${savepoint}` : "ROLLBACK");
-      if (depth) this.db.exec(`RELEASE ${savepoint}`);
-      throw error;
-    } finally {
-      this.transactionDepth--;
-    }
+  async transaction<T>(fn: () => T | Promise<T>): Promise<T> {
+    return await this.db.transaction(fn);
   }
-  company(orgId: string) {
-    const row = this.db
+  async company(orgId: string) {
+    const row = (await this.db
       .prepare("SELECT * FROM organizations WHERE id=?")
-      .get(orgId)!;
+      .get(orgId))!;
     return {
       ...JSON.parse(String(row.settings)),
       id: orgId,
@@ -191,20 +136,21 @@ export class Store {
       version: row.version,
     };
   }
-  list(orgId: string, kind: Kind): any[] {
-    return this.db
-      .prepare(
-        "SELECT * FROM records WHERE org_id=? AND kind=? ORDER BY created_at DESC,id",
-      )
-      .all(orgId, kind)
-      .map((row) => ({
-        ...JSON.parse(String(row.data)),
-        id: row.id,
-        version: row.version,
-      }));
+  async list(orgId: string, kind: Kind): Promise<any[]> {
+    return (
+      await this.db
+        .prepare(
+          "SELECT * FROM records WHERE org_id=? AND kind=? ORDER BY created_at DESC,id",
+        )
+        .all(orgId, kind)
+    ).map((row) => ({
+      ...JSON.parse(String(row.data)),
+      id: row.id,
+      version: row.version,
+    }));
   }
-  get(orgId: string, kind: Kind, id: string): any {
-    const row = this.db
+  async get(orgId: string, kind: Kind, id: string): Promise<any> {
+    const row = await this.db
       .prepare("SELECT * FROM records WHERE org_id=? AND kind=? AND id=?")
       .get(orgId, kind, id);
     if (!row) throw new HttpError(404, "Record not found.");
@@ -214,14 +160,20 @@ export class Store {
       version: row.version,
     };
   }
-  save(actor: Actor, kind: Kind, data: any, id?: string, version?: number) {
-    return this.transaction(() => {
+  async save(
+    actor: Actor,
+    kind: Kind,
+    data: any,
+    id?: string,
+    version?: number,
+  ) {
+    return await this.transaction(async () => {
       const recordId = id || randomUUID();
-      const before = id ? this.get(actor.orgId, kind, id) : null;
+      const before = id ? await this.get(actor.orgId, kind, id) : null;
       const effectiveDate =
         data._effectiveDate ||
         new Date().toLocaleDateString("en-CA", {
-          timeZone: this.company(actor.orgId).timezone,
+          timeZone: (await this.company(actor.orgId)).timezone,
         });
       const {
         id: ignoredId,
@@ -231,13 +183,13 @@ export class Store {
       } = data;
       data = clean;
       if (id) {
-        const existing = this.get(actor.orgId, kind, id);
+        const existing = await this.get(actor.orgId, kind, id);
         if (version !== existing.version)
           throw new HttpError(
             409,
             "This record changed. Refresh and try again.",
           );
-        this.db
+        await this.db
           .prepare(
             "UPDATE records SET data=?,version=version+1,employee_id=?,job_id=? WHERE org_id=? AND id=?",
           )
@@ -249,7 +201,7 @@ export class Store {
             id,
           );
       } else {
-        this.db
+        await this.db
           .prepare(
             "INSERT INTO records(org_id,id,kind,data,employee_id,job_id,created_at) VALUES(?,?,?,?,?,?,?)",
           )
@@ -263,9 +215,13 @@ export class Store {
             new Date().toISOString(),
           );
       }
-      this.audit(actor, `${id ? "Updated" : "Created"} ${kind}`, recordId);
+      await this.audit(
+        actor,
+        `${id ? "Updated" : "Created"} ${kind}`,
+        recordId,
+      );
       if (kind === "employees") {
-        this.save(actor, "employeeHistory", {
+        await this.save(actor, "employeeHistory", {
           employeeId: recordId,
           employeeName: data.name,
           effectiveDate: id ? effectiveDate : data.hireDate,
@@ -277,22 +233,22 @@ export class Store {
           changedBy: actor.name,
         });
       }
-      return this.get(actor.orgId, kind, recordId);
+      return await this.get(actor.orgId, kind, recordId);
     });
   }
-  remove(actor: Actor, kind: Kind, id: string, version: number) {
-    this.transaction(() => {
-      const record = this.get(actor.orgId, kind, id);
+  async remove(actor: Actor, kind: Kind, id: string, version: number) {
+    await this.transaction(async () => {
+      const record = await this.get(actor.orgId, kind, id);
       if (record.version !== version)
         throw new HttpError(409, "This record changed. Refresh and try again.");
-      this.db
+      await this.db
         .prepare("DELETE FROM records WHERE org_id=? AND kind=? AND id=?")
         .run(actor.orgId, kind, id);
-      this.audit(actor, `Deleted ${kind}`, id);
+      await this.audit(actor, `Deleted ${kind}`, id);
     });
   }
-  audit(actor: Actor, action: string, entityId: string) {
-    this.db
+  async audit(actor: Actor, action: string, entityId: string) {
+    await this.db
       .prepare("INSERT INTO audit VALUES(?,?,?,?,?,?,?)")
       .run(
         randomUUID(),
@@ -304,7 +260,7 @@ export class Store {
         new Date().toISOString(),
       );
   }
-  close() {
-    this.db.close();
+  async close() {
+    await this.db.close();
   }
 }

@@ -1,4 +1,5 @@
-import { after, test } from "node:test";
+import { openTestStore } from "./database-fixture";
+import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import ExcelJS from "exceljs";
@@ -10,10 +11,9 @@ import { config, leaveBalance } from "../server/suite-domain";
 import { calculateLine, statutory } from "../server/payroll";
 import { parseCSV, workbookBuffer } from "../server/import-export";
 import { attendanceSummary } from "../server/attendance-summary";
-
 const cleanup: Array<() => Promise<void>> = [];
-after(async () => {
-  for (const close of cleanup) await close();
+afterEach(async () => {
+  for (const close of cleanup.splice(0)) await close();
 });
 const employee = (email = "employee@example.test") => ({
   name: "Example Employee",
@@ -27,9 +27,9 @@ const employee = (email = "employee@example.test") => ({
   salary: { basic: 20000, hra: 8000, allowances: 1000, deductions: 0 },
 });
 async function fixture() {
-  const store = new Store(":memory:");
+  const store = await openTestStore(":memory:");
   const orgId = randomUUID();
-  store.db
+  await store.db
     .prepare("INSERT INTO organizations(id,slug,settings) VALUES(?,?,?)")
     .run(
       orgId,
@@ -57,15 +57,15 @@ async function fixture() {
   cleanup.push(
     () =>
       new Promise<void>((resolve, reject) =>
-        server.close((error) => {
-          store.close();
+        server.close(async (error) => {
+          await store.close();
           error ? reject(error) : resolve();
         }),
       ),
   );
-  function client(user: Actor) {
+  async function client(user: Actor) {
     const token = randomUUID();
-    store.db
+    await store.db
       .prepare(
         "INSERT INTO users(id,org_id,name,email,password_hash,role,employee_id) VALUES(?,?,?,?,?,?,?)",
       )
@@ -78,7 +78,7 @@ async function fixture() {
         user.accessRole,
         user.employeeId,
       );
-    store.db
+    await store.db
       .prepare("INSERT INTO sessions VALUES(?,?,?)")
       .run(digest(token), user.id, Date.now() + 3600000);
     return async (
@@ -114,14 +114,14 @@ async function fixture() {
       return { data, bytes, response };
     };
   }
-  const owner = client(actor);
-  const addEmployee = (email?: string) =>
-    store.save(
+  const owner = await client(actor);
+  const addEmployee = async (email?: string) =>
+    await store.save(
       actor,
       "employees",
-      validateRecord(store, actor, "employees", employee(email)),
+      await validateRecord(store, actor, "employees", employee(email)),
     );
-  function user(emp: any, role: Actor["accessRole"] = "employee") {
+  async function user(emp: any, role: Actor["accessRole"] = "employee") {
     const who: Actor = {
       ...actor,
       id: randomUUID(),
@@ -130,29 +130,28 @@ async function fixture() {
       employeeId: emp.id,
       accessRole: role,
     };
-    return { actor: who, request: client(who) };
+    return { actor: who, request: await client(who) };
   }
-  const settings = (patch: any) => {
-    const company = store.company(orgId);
-    store.db
+  const settings = async (patch: any) => {
+    const company = await store.company(orgId);
+    await store.db
       .prepare(
         "UPDATE organizations SET settings=?,version=version+1 WHERE id=?",
       )
       .run(
         JSON.stringify({
           ...company,
-          suite: { ...config(store, orgId), ...patch },
+          suite: { ...(await config(store, orgId)), ...patch },
         }),
         orgId,
       );
   };
   return { store, actor, orgId, owner, addEmployee, user, settings };
 }
-
 test("custom fields, branch and manager references and company settings preserve configuration", async () => {
   const f = await fixture(),
-    emp = f.addEmployee(),
-    manager = f.addEmployee("manager@example.test");
+    emp = await f.addEmployee(),
+    manager = await f.addEmployee("manager@example.test");
   const branch = (
     await f.owner(
       "/suite/records/branches",
@@ -172,7 +171,7 @@ test("custom fields, branch and manager references and company settings preserve
     { version: manager.version, managerId: emp.id },
     400,
   );
-  let company = f.store.company(f.orgId);
+  let company = await f.store.company(f.orgId);
   await f.owner("/suite/config", "PATCH", {
     version: company.version,
     settings: {
@@ -199,7 +198,7 @@ test("custom fields, branch and manager references and company settings preserve
     { ...employee("new@example.test"), customFields: { uniform_size: "M" } },
     201,
   );
-  company = f.store.company(f.orgId);
+  company = await f.store.company(f.orgId);
   await f.owner("/company", "PATCH", { ...company, name: "Updated Company" });
   assert.equal(
     (await f.owner("/suite")).data.settings.customFields[0].key,
@@ -207,20 +206,19 @@ test("custom fields, branch and manager references and company settings preserve
   );
   await f.owner("/suite/config", "PATCH", { version: 1, settings: {} }, 409);
 });
-
 test("manager then HR approvals enforce stage order, no self approval and private employee state", async () => {
   const f = await fixture(),
-    emp = f.addEmployee(),
-    manager = f.addEmployee("manager@example.test"),
-    employeeUser = f.user(emp),
-    managerUser = f.user(manager);
+    emp = await f.addEmployee(),
+    manager = await f.addEmployee("manager@example.test"),
+    employeeUser = await f.user(emp),
+    managerUser = await f.user(manager);
   await f.owner(`/records/employees/${emp.id}`, "PATCH", {
     version: emp.version,
     managerId: manager.id,
   });
-  f.settings({
+  await f.settings({
     approvalChains: {
-      ...config(f.store, f.orgId).approvalChains,
+      ...(await config(f.store, f.orgId)).approvalChains,
       expenses: ["manager", "hr"],
     },
   });
@@ -289,11 +287,10 @@ test("manager then HR approvals enforce stage order, no self approval and privat
     409,
   );
 });
-
 test("leave policies exclude weekends and holidays, reserve balance, cancel and carry forward", async () => {
   const f = await fixture(),
-    emp = f.addEmployee();
-  f.settings({
+    emp = await f.addEmployee();
+  await f.settings({
     leavePolicies: [
       {
         leaveType: "Casual",
@@ -328,7 +325,8 @@ test("leave policies exclude weekends and holidays, reserve balance, cancel and 
   assert.deepEqual(leave.chargeDates, ["2026-08-04"]);
   assert.equal(leave.days, 1);
   assert.equal(
-    leaveBalance(f.store, f.orgId, emp, "Casual", "2026-08-31").available,
+    (await leaveBalance(f.store, f.orgId, emp, "Casual", "2026-08-31"))
+      .available,
     11,
   );
   await f.owner(
@@ -345,14 +343,15 @@ test("leave policies exclude weekends and holidays, reserve balance, cancel and 
   );
   await f.owner(`/suite/cancel/leaves/${leave.id}`, "POST", { version: 1 });
   assert.equal(
-    leaveBalance(f.store, f.orgId, emp, "Casual", "2026-08-31").available,
+    (await leaveBalance(f.store, f.orgId, emp, "Casual", "2026-08-31"))
+      .available,
     12,
   );
   assert.equal(
-    leaveBalance(f.store, f.orgId, emp, "Casual", "2027-01-01").carried,
+    (await leaveBalance(f.store, f.orgId, emp, "Casual", "2027-01-01")).carried,
     3,
   );
-  f.settings({
+  await f.settings({
     leavePolicies: [
       {
         leaveType: "Casual",
@@ -365,15 +364,15 @@ test("leave policies exclude weekends and holidays, reserve balance, cancel and 
     ],
   });
   assert.equal(
-    leaveBalance(f.store, f.orgId, emp, "Casual", "2026-03-31").allowance,
+    (await leaveBalance(f.store, f.orgId, emp, "Casual", "2026-03-31"))
+      .allowance,
     3,
   );
 });
-
 test("policies retain revision-specific acknowledgement evidence and restrict employees to published policies", async () => {
   const f = await fixture(),
-    emp = f.addEmployee(),
-    u = f.user(emp);
+    emp = await f.addEmployee(),
+    u = await f.user(emp);
   let policy = (
     await f.owner(
       "/suite/records/policies",
@@ -430,16 +429,15 @@ test("policies retain revision-specific acknowledgement evidence and restrict em
     201,
   );
   assert.equal(
-    f.store.get(f.orgId, "acknowledgements", ack.id).policyText,
+    (await f.store.get(f.orgId, "acknowledgements", ack.id)).policyText,
     "Use protective equipment.",
   );
 });
-
 test("confidential grievances are invisible to unassigned HR and colleagues", async () => {
   const f = await fixture(),
-    employeeUser = f.user(f.addEmployee()),
-    other = f.user(f.addEmployee("other@example.test")),
-    hr = f.user(f.addEmployee("hr@example.test"), "hr");
+    employeeUser = await f.user(await f.addEmployee()),
+    other = await f.user(await f.addEmployee("other@example.test")),
+    hr = await f.user(await f.addEmployee("hr@example.test"), "hr");
   const ticket = (
     await employeeUser.request(
       "/suite/records/tickets",
@@ -475,11 +473,10 @@ test("confidential grievances are invisible to unassigned HR and colleagues", as
     comment: "Thank you",
   });
 });
-
 test("attendance correction approval writes a clock record and rejects overlapping or stale replacements", async () => {
   const f = await fixture(),
-    emp = f.addEmployee(),
-    u = f.user(emp);
+    emp = await f.addEmployee(),
+    u = await f.user(emp);
   const payload = {
     checkInAt: "2026-08-03T03:30:00Z",
     checkOutAt: "2026-08-03T12:00:00Z",
@@ -493,13 +490,16 @@ test("attendance correction approval writes a clock record and rejects overlappi
       201,
     )
   ).data;
-  assert.equal(f.store.list(f.orgId, "attendance").length, 0);
+  assert.equal((await f.store.list(f.orgId, "attendance")).length, 0);
   await f.owner(
     `/suite/decisions/attendanceCorrections/${correction.id}`,
     "POST",
     { version: 1, status: "Approved" },
   );
-  assert.equal(f.store.list(f.orgId, "attendance")[0].date, "2026-08-03");
+  assert.equal(
+    (await f.store.list(f.orgId, "attendance"))[0].date,
+    "2026-08-03",
+  );
   const duplicate = (
     await u.request(
       "/suite/records/attendanceCorrections",
@@ -515,15 +515,14 @@ test("attendance correction approval writes a clock record and rejects overlappi
     409,
   );
   assert.equal(
-    f.store.get(f.orgId, "attendanceCorrections", duplicate.id).status,
+    (await f.store.get(f.orgId, "attendanceCorrections", duplicate.id)).status,
     "Pending",
   );
 });
-
 test("employment changes preserve salary history, and offboarding requires asset return and revokes access", async () => {
   const f = await fixture(),
-    emp = f.addEmployee(),
-    u = f.user(emp);
+    emp = await f.addEmployee(),
+    u = await f.user(emp);
   const change = (
     await f.owner(
       "/suite/records/employmentChanges",
@@ -544,12 +543,15 @@ test("employment changes preserve salary history, and offboarding requires asset
     version: 1,
     action: "Apply",
   });
-  assert.equal(f.store.get(f.orgId, "employees", emp.id).salary.basic, 30000);
+  assert.equal(
+    (await f.store.get(f.orgId, "employees", emp.id)).salary.basic,
+    30000,
+  );
   const period = (
     await f.owner("/suite/payroll", "POST", { month: "2026-08" }, 201)
   ).data;
   assert.equal(period.lines[0].gross, 34161.29);
-  const asset = f.store.save(f.actor, "assets", {
+  const asset = await f.store.save(f.actor, "assets", {
     name: "Laptop",
     serialNumber: "A1",
     status: "Assigned",
@@ -577,7 +579,7 @@ test("employment changes preserve salary history, and offboarding requires asset
     { version: checklist.version, action: "Complete" },
     409,
   );
-  f.store.save(
+  await f.store.save(
     f.actor,
     "assets",
     { ...asset, status: "Available", assignedToId: null },
@@ -588,16 +590,18 @@ test("employment changes preserve salary history, and offboarding requires asset
     version: checklist.version,
     action: "Complete",
   });
-  assert.equal(f.store.get(f.orgId, "employees", emp.id).status, "Terminated");
+  assert.equal(
+    (await f.store.get(f.orgId, "employees", emp.id)).status,
+    "Terminated",
+  );
   await u.request("/suite", "GET", undefined, 401);
 });
-
 test("payroll requires reviewed inputs and different approver, freezes payslips and prevents double reimbursement", async () => {
   const f = await fixture(),
-    emp = f.addEmployee(),
-    hrEmp = f.addEmployee("hr@example.test"),
-    hr = f.user(hrEmp, "hr"),
-    u = f.user(emp);
+    emp = await f.addEmployee(),
+    hrEmp = await f.addEmployee("hr@example.test"),
+    hr = await f.user(hrEmp, "hr"),
+    u = await f.user(emp);
   let expense = (
     await u.request(
       "/suite/records/expenses",
@@ -697,8 +701,8 @@ test("payroll requires reviewed inputs and different approver, freezes payslips 
   assert.equal(payrollState.lines.length, 1);
   assert.ok(!payrollState.expenseIds);
   const snapshot = period.lines[0].net;
-  const current = f.store.get(f.orgId, "employees", emp.id);
-  f.store.save(
+  const current = await f.store.get(f.orgId, "employees", emp.id);
+  await f.store.save(
     f.actor,
     "employees",
     { ...current, salary: { ...current.salary, basic: 99999 } },
@@ -706,7 +710,7 @@ test("payroll requires reviewed inputs and different approver, freezes payslips 
     current.version,
   );
   assert.equal(
-    f.store.get(f.orgId, "payroll", period.id).lines[0].net,
+    (await f.store.get(f.orgId, "payroll", period.id)).lines[0].net,
     snapshot,
   );
   await f.owner(`/suite/payroll/${period.id}`, "POST", {
@@ -715,11 +719,10 @@ test("payroll requires reviewed inputs and different approver, freezes payslips 
     reference: "bank-batch-1",
   });
   assert.equal(
-    f.store.get(f.orgId, "expenses", expense.id).status,
+    (await f.store.get(f.orgId, "expenses", expense.id)).status,
     "Reimbursed",
   );
 });
-
 test("Maharashtra statutory boundaries, February tax, welfare months, PF and ESI rounding", () => {
   assert.equal(
     statutory("2026-02", 10000, { ptCategory: "Standard" }).professionalTax,
@@ -779,7 +782,6 @@ test("Maharashtra statutory boundaries, February tax, welfare months, PF and ESI
   );
   assert.equal(line.net, 10200);
 });
-
 test("CSV and Excel imports validate rows, commit atomically and reject replay and formulas", async () => {
   const f = await fixture();
   assert.deepEqual(parseCSV('a,b\n"hello, world","say ""hi"""'), [
@@ -800,14 +802,14 @@ test("CSV and Excel imports validate rows, commit atomically and reject replay a
     )
   ).data;
   assert.ok(preview.valid);
-  f.addEmployee("bob@example.test");
+  await f.addEmployee("bob@example.test");
   await f.owner(
     `/suite/imports/${preview.id}/commit`,
     "POST",
     { version: 1 },
     409,
   );
-  assert.equal(f.store.list(f.orgId, "employees").length, 1);
+  assert.equal((await f.store.list(f.orgId, "employees")).length, 1);
   preview = (
     await f.owner(
       "/suite/imports/preview",
@@ -873,10 +875,9 @@ test("CSV and Excel imports validate rows, commit atomically and reject replay a
   );
   assert.match(String(restored.worksheets[0].getCell("A2").value), /^'/);
 });
-
 test("integration tokens enforce scope, tenant, idempotency, overlap protection and revocation", async () => {
   const f = await fixture(),
-    emp = f.addEmployee();
+    emp = await f.addEmployee();
   const key = (
     await f.owner(
       "/suite/integrations/keys",
@@ -913,33 +914,31 @@ test("integration tokens enforce scope, tenant, idempotency, overlap protection 
     404,
     headers,
   );
-  assert.equal(f.store.list(f.orgId, "attendance").length, 1);
+  assert.equal((await f.store.list(f.orgId, "attendance")).length, 1);
   assert.ok(!(await f.owner("/suite")).data.integrationKeys[0].tokenHash);
   await f.owner(`/suite/integrations/keys/${key.id}/revoke`, "POST", {
     version: 1,
   });
   await f.owner("/integrations/events", "POST", body, 401, headers);
 });
-
 test("module switches block old and new APIs without deleting stored records", async () => {
   const f = await fixture(),
-    emp = f.addEmployee(),
-    user = f.user(emp);
-  f.settings({ enabledModules: ["reports"] });
+    emp = await f.addEmployee(),
+    user = await f.user(emp);
+  await f.settings({ enabledModules: ["reports"] });
   await f.owner("/suite/payroll", "POST", { month: "2026-08" }, 403);
   await user.request("/attendance/clock", "POST", { action: "in" }, 403);
   await user.request("/records/leaves", "POST", {}, 403);
   await f.owner("/documents", "POST", {}, 403);
   assert.equal((await f.owner("/suite")).data.payroll.length, 0);
-  assert.equal(f.store.list(f.orgId, "employees").length, 1);
+  assert.equal((await f.store.list(f.orgId, "employees")).length, 1);
 });
-
 test("shift breaks apply once per date, overtime needs a reviewed rate and historical hourly rates are used", async () => {
   const f = await fixture();
-  const emp = f.store.save(
+  const emp = await f.store.save(
     f.actor,
     "employees",
-    validateRecord(f.store, f.actor, "employees", {
+    await validateRecord(f.store, f.actor, "employees", {
       ...employee(),
       payBasis: "Hourly",
       payRate: 100,
@@ -986,17 +985,19 @@ test("shift breaks apply once per date, overtime needs a reviewed rate and histo
     ["2026-08-03T03:30:00Z", "2026-08-03T07:30:00Z"],
     ["2026-08-03T08:30:00Z", "2026-08-03T13:30:00Z"],
   ])
-    f.store.save(f.actor, "attendance", {
+    await f.store.save(f.actor, "attendance", {
       employeeId: emp.id,
       employeeName: emp.name,
       date: "2026-08-03",
       checkInAt: start,
       checkOutAt: end,
     });
-  const summary = attendanceSummary(f.store, f.orgId, emp.id, "2026-08")[0];
+  const summary = (
+    await attendanceSummary(f.store, f.orgId, emp.id, "2026-08")
+  )[0];
   assert.equal(summary.paidHours, 8);
   assert.equal(summary.overtimeHours, 1);
-  const changed = f.store.save(
+  const changed = await f.store.save(
     f.actor,
     "employees",
     { ...emp, payRate: 200, _effectiveDate: "2026-09-01" },
@@ -1038,12 +1039,11 @@ test("shift breaks apply once per date, overtime needs a reviewed rate and histo
   assert.equal(period.lines[0].input.reviewed, false);
   assert.equal(period.lines[0].gross, 700);
 });
-
 test("bank updates require approval and are not exposed in the employee directory", async () => {
   const f = await fixture(),
-    emp = f.addEmployee(),
-    u = f.user(emp),
-    other = f.user(f.addEmployee("other@example.test"));
+    emp = await f.addEmployee(),
+    u = await f.user(emp),
+    other = await f.user(await f.addEmployee("other@example.test"));
   const bank = {
     accountName: emp.name,
     bankName: "Test Bank",
@@ -1062,13 +1062,13 @@ test("bank updates require approval and are not exposed in the employee director
       201,
     )
   ).data;
-  assert.ok(!f.store.get(f.orgId, "employees", emp.id).bankDetails);
+  assert.ok(!(await f.store.get(f.orgId, "employees", emp.id)).bankDetails);
   await f.owner(`/suite/decisions/profileRequests/${request.id}`, "POST", {
     version: 1,
     status: "Approved",
   });
   assert.equal(
-    f.store.get(f.orgId, "employees", emp.id).bankDetails.accountNumber,
+    (await f.store.get(f.orgId, "employees", emp.id)).bankDetails.accountNumber,
     "1234567890",
   );
   const state = (await other.request("/suite")).data;

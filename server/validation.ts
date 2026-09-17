@@ -5,7 +5,6 @@ import {
   employeeExtras,
   leaveDetails,
 } from "./suite-domain";
-
 export function text(
   value: unknown,
   label: string,
@@ -84,18 +83,17 @@ export function companySettings(body: any) {
     currency: "INR",
   };
 }
-
 /** Allowlisted input only: identities, durations, dates and status transitions are server-owned. */
-export function validateRecord(
+export async function validateRecord(
   store: Store,
   actor: Actor,
   kind: Kind,
   body: any,
   existing?: any,
-): any {
-  const company = store.company(actor.orgId);
-  const employee = (id: unknown) =>
-    store.get(actor.orgId, "employees", text(id, "Employee"));
+): Promise<any> {
+  const company = await store.company(actor.orgId);
+  const employee = async (id: unknown) =>
+    await store.get(actor.orgId, "employees", text(id, "Employee"));
   switch (kind) {
     case "employees": {
       const salary = body.salary || {};
@@ -114,7 +112,7 @@ export function validateRecord(
           "Profile image must use an HTTP or HTTPS URL.",
         );
       return {
-        ...employeeExtras(store, actor, body, existing),
+        ...(await employeeExtras(store, actor, body, existing)),
         name: text(body.name, "Name"),
         email: email(body.email),
         role: text(body.role, "Designation"),
@@ -144,10 +142,10 @@ export function validateRecord(
         if (updated.status === "Approved")
           Object.assign(
             updated,
-            leaveDetails(
+            await leaveDetails(
               store,
               actor,
-              employee(existing.employeeId),
+              await employee(existing.employeeId),
               existing.leaveType,
               existing.startDate,
               existing.endDate,
@@ -156,7 +154,7 @@ export function validateRecord(
           );
         return updated;
       }
-      const emp = employee(
+      const emp = await employee(
         actor.accessRole === "employee" ? actor.employeeId : body.employeeId,
       );
       if (emp.status !== "Active")
@@ -172,15 +170,13 @@ export function validateRecord(
       if (days > 366)
         throw new HttpError(400, "Leave requests cannot exceed 366 days.");
       if (
-        store
-          .list(actor.orgId, "leaves")
-          .some(
-            (l) =>
-              l.employeeId === emp.id &&
-              ["Pending", "Approved"].includes(l.status) &&
-              l.startDate <= end &&
-              l.endDate >= start,
-          )
+        (await store.list(actor.orgId, "leaves")).some(
+          (l) =>
+            l.employeeId === emp.id &&
+            ["Pending", "Approved"].includes(l.status) &&
+            l.startDate <= end &&
+            l.endDate >= start,
+        )
       )
         throw new HttpError(
           409,
@@ -196,8 +192,8 @@ export function validateRecord(
         employeeName: emp.name,
         startDate: start,
         endDate: end,
-        ...leaveDetails(store, actor, emp, leaveType, start, end),
-        ...approvalFor(store, actor, "leaves", emp),
+        ...(await leaveDetails(store, actor, emp, leaveType, start, end)),
+        ...(await approvalFor(store, actor, "leaves", emp)),
         reason: text(body.reason, "Reason", 2000),
         leaveType,
         status: "Pending",
@@ -228,7 +224,7 @@ export function validateRecord(
             "Rejected",
           ]),
         };
-      const job = store.get(actor.orgId, "jobs", text(body.jobId, "Job"));
+      const job = await store.get(actor.orgId, "jobs", text(body.jobId, "Job"));
       if (job.status !== "Active")
         throw new HttpError(400, "This job is closed.");
       return {
@@ -248,7 +244,8 @@ export function validateRecord(
         "Available",
         "Maintenance",
       ]);
-      const emp = status === "Assigned" ? employee(body.assignedToId) : null;
+      const emp =
+        status === "Assigned" ? await employee(body.assignedToId) : null;
       return {
         name: text(body.name, "Asset name"),
         serialNumber: text(body.serialNumber, "Serial number"),
@@ -270,7 +267,7 @@ export function validateRecord(
           ...existing,
           status: choice(body.status, "status", ["Approved"]),
         };
-      const emp = employee(body.employeeId),
+      const emp = await employee(body.employeeId),
         selfRating = number(body.selfRating, "Self rating", 5),
         managerRating = number(body.managerRating, "Manager rating", 5);
       if (selfRating < 1 || managerRating < 1)

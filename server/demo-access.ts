@@ -1,12 +1,10 @@
 import type { Store } from "./store";
-
 export const DEMO_SLUG = "mccia-demo";
 export const DEMO_EMAIL = "admin@mccia-demo.example";
 export const demoRoles = ["owner", "hr", "employee"] as const;
-
 /** Only trusted provisioning code can populate this allowlist, never an HTTP route. */
-export function demoAccounts(store: Store) {
-  return store.db
+export async function demoAccounts(store: Store) {
+  return await store.db
     .prepare(
       `
     SELECT u.* FROM demo_access d
@@ -18,9 +16,8 @@ export function demoAccounts(store: Store) {
     )
     .all(DEMO_SLUG);
 }
-
-export function isDemoWorkspace(store: Store, orgId: string) {
-  return !!store.db
+export async function isDemoWorkspace(store: Store, orgId: string) {
+  return !!(await store.db
     .prepare("SELECT 1 FROM demo_access WHERE org_id=? LIMIT 1")
-    .get(orgId);
+    .get(orgId));
 }

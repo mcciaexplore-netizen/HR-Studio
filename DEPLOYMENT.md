@@ -2,7 +2,7 @@
 
 ## Selected: free personal demo on Vercel
 
-Follow [VERCEL.md](VERCEL.md) for Vercel Hobby plus Turso Free. This preserves saved records in an external database and adds the Express API to Vercel. The user selected this route for a personal, non-commercial demo. Account setup, database initialization and live verification are required before calling it deployed.
+Follow [VERCEL.md](VERCEL.md) for Vercel Hobby plus Supabase Free. This preserves saved records in an external database and adds the Express API to Vercel. The user selected this route for a personal, non-commercial demo. Account setup, database initialization and live verification are required before calling it deployed.
 
 ## Alternative: paid server with a persistent disk
 

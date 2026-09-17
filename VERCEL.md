@@ -1,87 +1,38 @@
-# Free personal demo on Vercel + Turso
+# Vercel + Supabase deployment
 
-This is the selected deployment route for the **personal, non-commercial demo**. The existing paid Render configuration is an alternative and does not need to be applied.
+Follow [SUPABASE.md](SUPABASE.md) for the three setup steps: create a free Supabase project, run `npm run setup:supabase`, then add the connection to Vercel and redeploy.
 
-## Architecture and cost
+## Build and routing
 
-- Vercel serves the built website from `dist/public` and sends `/api/*` to `api/index.js`, which loads the bundled server from `dist/vercel.cjs`.
-- The Node.js API connects directly to a remote Turso database using the SQLite-compatible `libsql` driver. Records, uploads and sessions live in Turso, not on Vercel's temporary filesystem.
-- Use **Vercel Hobby** and **Turso Free**. No paid service, trial upgrade or billing add-on is needed for this setup within the free limits. Vercel Hobby is restricted to personal non-commercial use. Turso advertises no card requirement and 5 GB storage on Free; usage quotas still apply.
+- Branch: `feat/mccia-msme-hr-studio`
+- Node: **24.x**
+- Framework: **Vite**
+- Install: `npm ci`
+- Build: `npm run build`
+- Static output: `dist/public`
+- API: `/api/*` is routed to `api/index.js`, which imports `dist/vercel.cjs`.
 
-Sources checked 16 September 2026: [Vercel Hobby](https://vercel.com/docs/plans/hobby), [Turso pricing](https://turso.tech/pricing), [libSQL driver](https://github.com/tursodatabase/libsql-js).
+The build bundles server imports before Vercel runs them. The explicit `.cjs` import avoids Node's extensionless-module startup error. Every build runs `test:vercel` in plain Node with the database secret removed, confirming that the function loads and returns its controlled setup response instead of crashing. The private server bundle and Excel worker are included in the function, outside the public assets directory.
 
-## 1. Create the database
+Vercel startup opens Supabase asynchronously and shares initialization between concurrent requests. It validates the existing schema, never creates tables or demo accounts on requests, closes registration and uses secure cookies. Missing configuration returns a safe 503 response. No native database driver package or local database file is deployed for persistence.
 
-Sign in to [Turso](https://app.turso.tech/) and create a new, empty **SQLite/libSQL-compatible** database on the **Free** plan, named `hr-studio-demo` or another unused name. Choose a region close to the Vercel function region where available. Copy its database URL and generate a database-scoped read/write token. This token is a server secret; do not put it in browser code, a `VITE_*` variable, Git, screenshots or chat.
-
-Add the following values to the ignored `.env.local` on the development machine:
-
-```dotenv
-TURSO_DATABASE_URL=libsql://YOUR_DATABASE_HOST
-TURSO_AUTH_TOKEN=YOUR_DATABASE_TOKEN
-```
-
-Initialize it once from the repository root:
-
-```sh
-npm ci
-npm run setup:turso
-```
-
-Setup builds fictional sample data locally, then inserts it into the new remote database. It does not upload the current local HR database. Existing HR Studio v3 workspaces are preserved; other schemas are refused. It creates Admin, HR and Employee demo access without printing passwords or tokens. The API does not run schema migrations or reseed data on requests or cold starts.
-
-## 2. Configure Vercel
-
-Use the Vercel account that owns the project. If the old deployment says **You Need Access**, switch to its authorized account; build configuration cannot remove that access requirement.
-
-Import `mcciaexplore-netizen/HR-Studio`, or update the existing project. Use:
-
-| Setting           | Value                       |
-| ----------------- | --------------------------- |
-| Deployment branch | `feat/mccia-msme-hr-studio` |
-| Root directory    | Repository root             |
-| Framework         | Vite                        |
-| Node              | 24.x                        |
-| Install           | `npm ci`                    |
-| Build             | `npm run build`             |
-| Output            | `dist/public`               |
-
-`vercel.json` supplies the build output, API rewrite, browser security headers, function duration and Excel worker/native-driver files.
-
-The build bundles the server's TypeScript imports before Vercel runs them. The JavaScript entry uses an explicit `.cjs` path so Node does not attempt to load extensionless source imports. Every build also runs the deployed entry in plain Node without database credentials, checking that it returns the controlled 503 setup response instead of crashing with `ERR_MODULE_NOT_FOUND`.
-
-Set these **server environment variables** in the Vercel project for the intended deployment environment:
-
-| Variable             | Value                                                                                                  |
-| -------------------- | ------------------------------------------------------------------------------------------------------ |
-| `TURSO_DATABASE_URL` | Database URL from step 1                                                                               |
-| `TURSO_AUTH_TOKEN`   | Database-scoped secret token from step 1                                                               |
-| `DEMO_LOGIN_ENABLED` | `true`                                                                                                 |
-| `APP_URL`            | Exact public HTTPS origin used for sign-in, such as your assigned `https://project.vercel.app` address |
-
-Use the actual assigned domain. If `APP_URL` is omitted, the handler uses Vercel's immutable `VERCEL_URL`, so a different alias can be rejected during sign-in. Set the stable production alias explicitly. For preview deployments, use a separate demo database and the preview's origin or omit `APP_URL` there. Do not connect untrusted preview code to a database containing real records.
-
-No `DATABASE_PATH`, persistent disk, `DEMO_BOOTSTRAP`, SMTP secret or Gemini key is required for this demo. Registration is always closed in the Vercel entry point, and cookies are always secure. Configure the environment before redeploying; environment changes require a new deployment.
-
-## 3. Verify the live deployment
-
-1. Open the new deployment's public domain; old immutable URLs keep their old build.
-2. Visit `/api/health` and expect `{"status":"ok"}`. A 503 means database credentials, connectivity or schema setup needs attention; it is not a successful full-app deployment.
-3. Sign in using each demo role and check employee access is limited to the linked employee.
-4. Add a fictional asset, redeploy, and verify the same record remains. Test one small Excel import/export and payroll workflow against the remote database.
-
-Local compatibility tests do not verify your cloud credentials, Vercel routing or remote latency. Those checks require the accounts and a deployed service. Remote transactions have stricter time/latency constraints than a local file, so this synchronous compatibility adapter is intended for the small demo; large imports and payroll runs need remote load testing and potentially batched operations before business use. Authentication rate limits currently apply per function instance, not globally across Vercel instances.
-
-## Local verification
+## Local checks
 
 ```sh
 npm run lint
 npm test
-npm run test:libsql
+npm run test:postgres
 npm run build
 npm run test:production
 npm run test:hosted
-npm run test:vercel
 ```
 
-The libSQL suite runs the same permission, transaction, import/export and persistence tests against the compatible local driver. Additional tests exercise the Vercel handler, missing-secret failures, bulk initialization and rollback. No cloud database or real email is touched by these checks.
+## Live checks
+
+1. `/api/health` returns `{"status":"ok"}`.
+2. `/api/auth/options` lists `owner`, `hr`, and `employee` when the demo is configured.
+3. Each demo button opens the expected role; employees only see permitted records.
+4. A fictional change survives a reload and redeployment.
+5. A small import/export and payroll workflow complete against the remote database.
+
+A successful build alone does not prove that the live database is connected. Supabase account setup and credentials must be completed before the app is ready for sign-in.

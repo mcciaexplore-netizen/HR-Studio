@@ -1,6 +1,6 @@
+import { mapAsync, reduceAsync } from "./async-utils";
 import { HttpError, Store, type Actor, type Kind } from "./store";
 import { choice, date, number, stringList, text } from "./validation";
-
 export const suiteKinds: Kind[] = [
   "branches",
   "holidays",
@@ -111,7 +111,7 @@ export const templates = {
     ],
   },
 };
-export function config(store: Store, orgId: string): any {
+export async function config(store: Store, orgId: string): Promise<any> {
   return {
     enabledModules: moduleNames,
     industry: "General",
@@ -130,19 +130,23 @@ export function config(store: Store, orgId: string): any {
     onboarding: templates.General.onboarding,
     offboarding: templates.General.offboarding,
     defaultLanguage: "en",
-    ...store.company(orgId).suite,
+    ...(await store.company(orgId)).suite,
   };
 }
-export const today = (store: Store, orgId: string) =>
+export const today = async (store: Store, orgId: string) =>
   new Date().toLocaleDateString("en-CA", {
-    timeZone: store.company(orgId).timezone,
+    timeZone: (await store.company(orgId)).timezone,
   });
-export function requireModule(store: Store, actor: Actor, module: string) {
-  if (!config(store, actor.orgId).enabledModules.includes(module))
+export async function requireModule(
+  store: Store,
+  actor: Actor,
+  module: string,
+) {
+  if (!(await config(store, actor.orgId)).enabledModules.includes(module))
     throw new HttpError(403, "This module is disabled for your company.");
 }
-export function validateConfig(body: any, store: Store, actor: Actor) {
-  const current = config(store, actor.orgId),
+export async function validateConfig(body: any, store: Store, actor: Actor) {
+  const current = await config(store, actor.orgId),
     next = { ...current, ...body };
   const enabledModules = Array.isArray(next.enabledModules)
     ? [
@@ -189,11 +193,11 @@ export function validateConfig(body: any, store: Store, actor: Actor) {
     throw new HttpError(400, "Choose up to six weekly days off.");
   if (!Array.isArray(next.leavePolicies) || next.leavePolicies.length > 30)
     throw new HttpError(400, "Use at most 30 leave policies.");
-  const leavePolicies = next.leavePolicies.map((p: any) => ({
+  const leavePolicies = await mapAsync(next.leavePolicies, async (p: any) => ({
     leaveType: choice(
       p.leaveType,
       "leave type",
-      store.company(actor.orgId).leaveTypes,
+      (await store.company(actor.orgId)).leaveTypes,
     ),
     annualDays: number(p.annualDays, "Annual allowance", 366),
     accrual: choice(p.accrual, "accrual", ["Annual", "Monthly"]),
@@ -216,9 +220,9 @@ export function validateConfig(body: any, store: Store, actor: Actor) {
     const stages = next.approvalChains?.[kind];
     if (!Array.isArray(stages) || stages.length < 1 || stages.length > 5)
       throw new HttpError(400, "Each approval chain needs one to five stages.");
-    approvalChains[kind] = stages.map((stage: any) => {
+    approvalChains[kind] = await mapAsync(stages, async (stage: any) => {
       if (["hr", "owner", "manager"].includes(stage)) return stage;
-      const row = store.db
+      const row = await store.db
         .prepare("SELECT id FROM users WHERE id=? AND org_id=? AND active=1")
         .get(text(stage, "Approver"), actor.orgId);
       if (!row)
@@ -230,7 +234,7 @@ export function validateConfig(body: any, store: Store, actor: Actor) {
     });
   }
   const newWorkers = stringList(next.workerTypes, "Worker categories");
-  for (const employee of store.list(actor.orgId, "employees"))
+  for (const employee of await store.list(actor.orgId, "employees"))
     if (employee.workerType && !newWorkers.includes(employee.workerType))
       throw new HttpError(409, "A worker category is still used by employees.");
   return {
@@ -252,16 +256,16 @@ export function validateConfig(body: any, store: Store, actor: Actor) {
     ]),
   };
 }
-export function employeeExtras(
+export async function employeeExtras(
   store: Store,
   actor: Actor,
   body: any,
   existing?: any,
 ) {
-  const settings = config(store, actor.orgId),
+  const settings = await config(store, actor.orgId),
     branchId = text(body.branchId, "Branch", 200, true),
     managerId = text(body.managerId, "Manager", 200, true);
-  if (branchId) store.get(actor.orgId, "branches", branchId);
+  if (branchId) await store.get(actor.orgId, "branches", branchId);
   if (managerId) {
     let cursor = managerId;
     const visited = new Set<string>(existing ? [existing.id] : []);
@@ -269,7 +273,7 @@ export function employeeExtras(
       if (visited.has(cursor))
         throw new HttpError(400, "Reporting managers cannot form a cycle.");
       visited.add(cursor);
-      cursor = store.get(actor.orgId, "employees", cursor).managerId;
+      cursor = (await store.get(actor.orgId, "employees", cursor)).managerId;
     }
   }
   const customFields: Record<string, any> = {};
@@ -336,23 +340,25 @@ export function employeeExtras(
     customFields,
   };
 }
-export function approvalFor(
+export async function approvalFor(
   store: Store,
   actor: Actor,
   kind: string,
   employee: any,
 ) {
-  const stages = config(store, actor.orgId).approvalChains[kind] || ["hr"];
+  const stages = (await config(store, actor.orgId)).approvalChains[kind] || [
+    "hr",
+  ];
   return {
-    approvalStages: stages.map((stage: string) => {
+    approvalStages: await mapAsync(stages, async (stage: string) => {
       if (stage !== "manager") return stage;
       const manager =
         employee.managerId &&
-        store.db
+        (await store.db
           .prepare(
             "SELECT id FROM users WHERE org_id=? AND employee_id=? AND active=1",
           )
-          .get(actor.orgId, employee.managerId);
+          .get(actor.orgId, employee.managerId));
       if (!manager)
         throw new HttpError(
           400,
@@ -404,16 +410,16 @@ export function decision(actor: Actor, record: any, action: any, comment: any) {
     ],
   };
 }
-export function workingDates(
+export async function workingDates(
   store: Store,
   orgId: string,
   employee: any,
   start: string,
   end: string,
   exclude: boolean,
-): string[] {
-  const weekends = config(store, orgId).weekendDays,
-    holidays = store.list(orgId, "holidays");
+): Promise<string[]> {
+  const weekends = (await config(store, orgId)).weekendDays,
+    holidays = await store.list(orgId, "holidays");
   const result: string[] = [];
   for (let day = Date.parse(start); day <= Date.parse(end); day += 86400000) {
     const value = new Date(day).toISOString().slice(0, 10);
@@ -430,7 +436,7 @@ export function workingDates(
   }
   return result;
 }
-export function leaveBalance(
+export async function leaveBalance(
   store: Store,
   orgId: string,
   employee: any,
@@ -438,8 +444,8 @@ export function leaveBalance(
   asOf: string,
   ignoreId?: string,
   depth = 0,
-): any {
-  const policy = config(store, orgId).leavePolicies.find(
+): Promise<any> {
+  const policy = (await config(store, orgId)).leavePolicies.find(
     (p: any) => p.leaveType === type,
   );
   if (!policy) return { leaveType: type, configured: false };
@@ -468,55 +474,53 @@ export function leaveBalance(
           policy.carryForward,
           Math.max(
             0,
-            leaveBalance(
-              store,
-              orgId,
-              employee,
-              type,
-              `${year - 1}-12-31`,
-              undefined,
-              depth + 1,
+            (
+              await leaveBalance(
+                store,
+                orgId,
+                employee,
+                type,
+                `${year - 1}-12-31`,
+                undefined,
+                depth + 1,
+              )
             ).available || 0,
           ),
         )
       : 0;
-  const adjustments = store
-    .list(orgId, "leaveAdjustments")
+  const adjustments = (await store.list(orgId, "leaveAdjustments"))
     .filter(
       (a) =>
         a.employeeId === employee.id && a.leaveType === type && a.year === year,
     )
     .reduce((sum, a) => sum + a.days, 0);
-  const leaves = store
-    .list(orgId, "leaves")
-    .filter(
-      (l) =>
-        l.id !== ignoreId &&
-        l.employeeId === employee.id &&
-        l.leaveType === type &&
-        ["Pending", "Approved"].includes(l.status),
+  const leaves = (await store.list(orgId, "leaves")).filter(
+    (l) =>
+      l.id !== ignoreId &&
+      l.employeeId === employee.id &&
+      l.leaveType === type &&
+      ["Pending", "Approved"].includes(l.status),
+  );
+  const used = async (status: string) =>
+    await reduceAsync(
+      leaves.filter((l) => l.status === status),
+      async (sum, l) =>
+        sum +
+        (
+          l.chargeDates ||
+          (await workingDates(
+            store,
+            orgId,
+            employee,
+            l.startDate,
+            l.endDate,
+            policy.excludeNonWorking,
+          ))
+        ).filter((d: string) => d >= start && d <= end).length,
+      0,
     );
-  const used = (status: string) =>
-    leaves
-      .filter((l) => l.status === status)
-      .reduce(
-        (sum, l) =>
-          sum +
-          (
-            l.chargeDates ||
-            workingDates(
-              store,
-              orgId,
-              employee,
-              l.startDate,
-              l.endDate,
-              policy.excludeNonWorking,
-            )
-          ).filter((d: string) => d >= start && d <= end).length,
-        0,
-      );
-  const approved = used("Approved"),
-    pending = used("Pending");
+  const approved = await used("Approved"),
+    pending = await used("Pending");
   return {
     leaveType: type,
     configured: true,
@@ -532,7 +536,7 @@ export function leaveBalance(
       ) / 100,
   };
 }
-export function leaveDetails(
+export async function leaveDetails(
   store: Store,
   actor: Actor,
   employee: any,
@@ -541,10 +545,10 @@ export function leaveDetails(
   end: string,
   ignoreId?: string,
 ) {
-  const policy = config(store, actor.orgId).leavePolicies.find(
+  const policy = (await config(store, actor.orgId)).leavePolicies.find(
     (p: any) => p.leaveType === type,
   );
-  const dates = workingDates(
+  const dates = await workingDates(
     store,
     actor.orgId,
     employee,
@@ -557,7 +561,7 @@ export function leaveDetails(
   if (policy?.paid)
     for (const year of [...new Set(dates.map((d) => d.slice(0, 4)))]) {
       const lastDate = dates.filter((d) => d.startsWith(year)).at(-1)!;
-      const balance = leaveBalance(
+      const balance = await leaveBalance(
         store,
         actor.orgId,
         employee,

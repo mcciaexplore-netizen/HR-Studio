@@ -8,8 +8,6 @@ import { provisionHostedDemo } from "../server/hosted-demo";
 import { createDemoWorkspace } from "../server/demo";
 import { demoAccounts } from "../server/demo-access";
 import { Store } from "../server/store";
-import { releaseNativeStatements } from "./native-cleanup";
-
 test("hosted configuration uses the external HTTPS origin and secure defaults", () => {
   const env = prepareHostedEnvironment({
     DATABASE_PATH: resolve("var/hosted.sqlite"),
@@ -26,7 +24,6 @@ test("hosted configuration uses the external HTTPS origin and secure defaults", 
     "https://hr.example.test",
   );
 });
-
 test("hosted configuration fails before opening an unsafe or ambiguous database", () => {
   const valid = {
     DATABASE_PATH: resolve("var/hosted.sqlite"),
@@ -68,11 +65,9 @@ test("hosted configuration fails before opening an unsafe or ambiguous database"
     /true or false/,
   );
 });
-
 function temporaryDatabase(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), "hrstudio-hosted-test-"));
   t.after(async () => {
-    await releaseNativeStatements();
     const target = resolve(directory);
     assert.equal(dirname(target), resolve(tmpdir()));
     assert.ok(basename(target).startsWith("hrstudio-hosted-test-"));
@@ -80,7 +75,6 @@ function temporaryDatabase(t: TestContext) {
   });
   return join(directory, "test.sqlite");
 }
-
 test("hosted demo is initialized once and preserves account changes after reopening", async (t) => {
   const filename = temporaryDatabase(t);
   assert.equal(
@@ -90,56 +84,54 @@ test("hosted demo is initialized once and preserves account changes after reopen
   let store = new Store(filename);
   let before;
   try {
-    assert.deepEqual(
-      demoAccounts(store)
-        .map((a) => a.role)
-        .sort(),
-      ["employee", "hr", "owner"],
-    );
-    store.db.prepare("UPDATE users SET active=0 WHERE role='hr'").run();
+    assert.deepEqual((await demoAccounts(store)).map((a) => a.role).sort(), [
+      "employee",
+      "hr",
+      "owner",
+    ]);
+    await store.db.prepare("UPDATE users SET active=0 WHERE role='hr'").run();
     before = {
-      users: store.db.prepare("SELECT * FROM users ORDER BY id").all(),
-      records: store.db.prepare("SELECT * FROM records ORDER BY id").all(),
-      audit: store.db.prepare("SELECT * FROM audit ORDER BY id").all(),
+      users: await store.db.prepare("SELECT * FROM users ORDER BY id").all(),
+      records: await store.db
+        .prepare("SELECT * FROM records ORDER BY id")
+        .all(),
+      audit: await store.db.prepare("SELECT * FROM audit ORDER BY id").all(),
     };
   } finally {
-    store.close();
+    await store.close();
   }
   assert.equal(await provisionHostedDemo(filename), "already provisioned");
   store = new Store(filename);
   try {
     assert.deepEqual(
-      store.db.prepare("SELECT * FROM users ORDER BY id").all(),
+      await store.db.prepare("SELECT * FROM users ORDER BY id").all(),
       before.users,
     );
     assert.deepEqual(
-      store.db.prepare("SELECT * FROM records ORDER BY id").all(),
+      await store.db.prepare("SELECT * FROM records ORDER BY id").all(),
       before.records,
     );
     assert.deepEqual(
-      store.db.prepare("SELECT * FROM audit ORDER BY id").all(),
+      await store.db.prepare("SELECT * FROM audit ORDER BY id").all(),
       before.audit,
     );
-    assert.deepEqual(
-      demoAccounts(store)
-        .map((a) => a.role)
-        .sort(),
-      ["employee", "owner"],
-    );
+    assert.deepEqual((await demoAccounts(store)).map((a) => a.role).sort(), [
+      "employee",
+      "owner",
+    ]);
   } finally {
-    store.close();
+    await store.close();
   }
 });
-
 test("hosted demo skips existing companies and refuses an ordinary company with the demo slug", async (t) => {
   const filename = temporaryDatabase(t);
   let store = new Store(filename);
   try {
-    store.db
+    await store.db
       .prepare("INSERT INTO organizations(id,slug,settings) VALUES(?,?,?)")
       .run("private", "private", '{"name":"Private company"}');
   } finally {
-    store.close();
+    await store.close();
   }
   assert.equal(
     await provisionHostedDemo(filename),
@@ -148,40 +140,42 @@ test("hosted demo skips existing companies and refuses an ordinary company with 
   store = new Store(filename);
   try {
     assert.equal(
-      store.db.prepare("SELECT count(*) n FROM organizations").get()!.n,
+      (await store.db.prepare("SELECT count(*) n FROM organizations").get())!.n,
       1,
     );
     assert.equal(
-      store.db.prepare("SELECT count(*) n FROM demo_access").get()!.n,
+      (await store.db.prepare("SELECT count(*) n FROM demo_access").get())!.n,
       0,
     );
-    store.db
+    await store.db
       .prepare("UPDATE organizations SET slug='mccia-demo' WHERE id='private'")
       .run();
   } finally {
-    store.close();
+    await store.close();
   }
   await assert.rejects(provisionHostedDemo(filename), /Ordinary workspaces/);
   store = new Store(filename);
   try {
-    assert.equal(store.company("private").name, "Private company");
-    assert.equal(store.db.prepare("SELECT count(*) n FROM users").get()!.n, 0);
+    assert.equal((await store.company("private")).name, "Private company");
     assert.equal(
-      store.db.prepare("SELECT count(*) n FROM demo_access").get()!.n,
+      (await store.db.prepare("SELECT count(*) n FROM users").get())!.n,
+      0,
+    );
+    assert.equal(
+      (await store.db.prepare("SELECT count(*) n FROM demo_access").get())!.n,
       0,
     );
   } finally {
-    store.close();
+    await store.close();
   }
 });
-
 test("hosted demo resumes when setup stopped after creating the fictional company", async (t) => {
   const filename = temporaryDatabase(t);
   const store = new Store(filename);
   try {
     await createDemoWorkspace(store);
   } finally {
-    store.close();
+    await store.close();
   }
   assert.equal(
     await provisionHostedDemo(filename),
@@ -189,8 +183,8 @@ test("hosted demo resumes when setup stopped after creating the fictional compan
   );
   const reopened = new Store(filename);
   try {
-    assert.equal(demoAccounts(reopened).length, 3);
+    assert.equal((await demoAccounts(reopened)).length, 3);
   } finally {
-    reopened.close();
+    await reopened.close();
   }
 });

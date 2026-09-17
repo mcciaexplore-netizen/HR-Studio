@@ -8,16 +8,16 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild server/hosted-demo.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/hosted-demo.cjs && esbuild server/vercel.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/vercel.cjs && node scripts/copy-worker.cjs && npm run test:vercel",
     "start": "node scripts/start.cjs",
     "start:hosted": "node scripts/start-hosted.cjs",
-    "setup:turso": "tsx scripts/setup-turso.ts",
     "demo:create": "tsx scripts/create-demo.ts",
     "demo:populate": "tsx scripts/populate-demo.ts",
     "branding:fetch": "node scripts/fetch-mccia-brand.mjs",
     "test": "tsx --test tests/*.test.ts",
-    "test:libsql": "node scripts/test-libsql.cjs",
     "test:production": "node scripts/smoke-production.cjs",
     "test:hosted": "node scripts/smoke-hosted.cjs",
     "test:vercel": "node scripts/smoke-vercel.mjs",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "setup:supabase": "tsx scripts/setup-supabase.ts",
+    "test:postgres": "node scripts/test-postgres.cjs"
   },
   "engines": {
     "node": "24.x"
@@ -35,10 +35,10 @@
     "exceljs": "^4.4.0",
     "express": "^4.21.2",
     "firebase": "^12.15.0",
-    "libsql": "0.5.29",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "nodemailer": "^9.0.3",
+    "postgres": "^3.4.8",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "recharts": "^3.9.2",
@@ -46,6 +46,7 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "@types/nodemailer": "^8.0.1",
