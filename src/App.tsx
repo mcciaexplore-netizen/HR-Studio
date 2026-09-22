@@ -369,7 +369,13 @@ export default function App() {
             />
           )}
           {currentTab === "idcard" && (
-            <IDCardView employees={employees} companyName={company.name} />
+            <IDCardView
+              employees={employees}
+              companyName={company.name}
+              onUpdateEmployeeAvatar={(empId, avatarUrl) =>
+                update("employees", empId, { avatar: avatarUrl })
+              }
+            />
           )}
           {currentTab === "recruitment" && (
             <RecruitmentView
