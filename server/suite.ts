@@ -981,7 +981,12 @@ export function registerSuite(app: Express, store: Store) {
           "reimbursement",
           "net",
         ];
-        rows = period.lines;
+        const selectedEmpIds = req.query.employees
+          ? String(req.query.employees).split(",").filter(Boolean)
+          : [];
+        rows = selectedEmpIds.length
+          ? period.lines.filter((l: any) => selectedEmpIds.includes(l.employeeId))
+          : period.lines;
       } else {
         const kind =
           ({ history: "employeeHistory", policies: "acknowledgements" } as any)[

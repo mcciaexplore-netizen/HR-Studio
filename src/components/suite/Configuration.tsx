@@ -346,6 +346,208 @@ export default function Configuration({
           }
           submit="Save lists"
         />
+      <Panel
+        title="Payroll Standard Templates"
+        description="Configure standardized payroll calculation templates. Define custom allowances (Basic, HRA, Special, etc.), deductions (PF, ESI, PT), gratuity rules, and monthly formula rates."
+      >
+        <div className="space-y-6">
+          {(draft.payrollTemplates || []).map((tpl: Row, tplIdx: number) => (
+            <div key={tpl.id || tplIdx} className="border border-slate-200 dark:border-slate-800 rounded-xl p-4 bg-slate-50/50 dark:bg-slate-900/40 space-y-4">
+              <div className="flex justify-between items-start gap-4">
+                <div>
+                  <h3 className="font-semibold text-slate-900 dark:text-slate-100 text-base">{tpl.name}</h3>
+                  <p className="text-xs text-slate-500">{tpl.description || "Custom payroll template"}</p>
+                </div>
+                <button
+                  type="button"
+                  className={secondaryClass}
+                  onClick={() => {
+                    const nextTemplates = draft.payrollTemplates.filter((_: any, i: number) => i !== tplIdx);
+                    setDraft({ ...draft, payrollTemplates: nextTemplates });
+                  }}
+                >
+                  Delete Template
+                </button>
+              </div>
+
+              {/* Allowances Section */}
+              <div className="space-y-2">
+                <h4 className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">Allowances (Earnings)</h4>
+                <Table
+                  rows={tpl.allowances || []}
+                  columns={[
+                    ["name", "Component Name"],
+                    ["type", "Calc Type"],
+                    ["value", "Value (% or ₹)"],
+                    ["taxable", "Taxable"],
+                  ]}
+                  actions={(item: Row) => (
+                    <button
+                      type="button"
+                      className={secondaryClass}
+                      onClick={() => {
+                        const next = structuredClone(draft.payrollTemplates);
+                        next[tplIdx].allowances = next[tplIdx].allowances.filter((a: Row) => a.id !== item.id);
+                        setDraft({ ...draft, payrollTemplates: next });
+                      }}
+                    >
+                      Delete Allowance
+                    </button>
+                  )}
+                />
+                <Form
+                  key={`alw-form-${tpl.id}-${tpl.allowances?.length}`}
+                  fields={[
+                    { key: "name", label: "Allowance Name", required: true, hint: "e.g. Transport Allowance" },
+                    { key: "type", label: "Type", options: [{ value: "percentage", label: "Percentage of Gross (%)" }, { value: "fixed", label: "Fixed Amount (₹)" }] },
+                    { key: "value", label: "Value", type: "number", required: true },
+                    { key: "taxable", label: "Taxable Allowance", type: "checkbox" },
+                  ]}
+                  initial={{ type: "percentage", value: 10, taxable: true }}
+                  onSubmit={(body) => {
+                    const next = structuredClone(draft.payrollTemplates);
+                    next[tplIdx].allowances.push({
+                      id: `alw_${Date.now()}`,
+                      name: body.name,
+                      type: body.type,
+                      value: Number(body.value),
+                      taxable: !!body.taxable,
+                    });
+                    setDraft({ ...draft, payrollTemplates: next });
+                    return Promise.resolve(true);
+                  }}
+                  submit="+ Add Allowance to Template"
+                />
+              </div>
+
+              {/* Deductions Section */}
+              <div className="space-y-2">
+                <h4 className="text-sm font-semibold text-rose-600 dark:text-rose-400">Deductions & Statutory Contributions</h4>
+                <Table
+                  rows={tpl.deductions || []}
+                  columns={[
+                    ["name", "Deduction Name"],
+                    ["type", "Calc Type"],
+                    ["value", "Value (% or ₹)"],
+                    ["statutory", "Statutory"],
+                  ]}
+                  actions={(item: Row) => (
+                    <button
+                      type="button"
+                      className={secondaryClass}
+                      onClick={() => {
+                        const next = structuredClone(draft.payrollTemplates);
+                        next[tplIdx].deductions = next[tplIdx].deductions.filter((d: Row) => d.id !== item.id);
+                        setDraft({ ...draft, payrollTemplates: next });
+                      }}
+                    >
+                      Delete Deduction
+                    </button>
+                  )}
+                />
+                <Form
+                  key={`ded-form-${tpl.id}-${tpl.deductions?.length}`}
+                  fields={[
+                    { key: "name", label: "Deduction Name", required: true, hint: "e.g. Voluntary PF / Insurance" },
+                    { key: "type", label: "Type", options: [{ value: "percentage", label: "Percentage (%)" }, { value: "fixed", label: "Fixed Amount (₹)" }] },
+                    { key: "value", label: "Value", type: "number", required: true },
+                    { key: "statutory", label: "Statutory Rule", type: "checkbox" },
+                  ]}
+                  initial={{ type: "percentage", value: 5, statutory: false }}
+                  onSubmit={(body) => {
+                    const next = structuredClone(draft.payrollTemplates);
+                    next[tplIdx].deductions.push({
+                      id: `ded_${Date.now()}`,
+                      name: body.name,
+                      type: body.type,
+                      value: Number(body.value),
+                      statutory: !!body.statutory,
+                    });
+                    setDraft({ ...draft, payrollTemplates: next });
+                    return Promise.resolve(true);
+                  }}
+                  submit="+ Add Deduction to Template"
+                />
+              </div>
+
+              {/* Gratuity & Monthly Calculation Rules */}
+              <div className="p-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg space-y-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id={`grat_check_${tplIdx}`}
+                    checked={tpl.gratuity?.enabled ?? true}
+                    onChange={(e) => {
+                      const next = structuredClone(draft.payrollTemplates);
+                      if (!next[tplIdx].gratuity) next[tplIdx].gratuity = {};
+                      next[tplIdx].gratuity.enabled = e.target.checked;
+                      setDraft({ ...draft, payrollTemplates: next });
+                    }}
+                  />
+                  <label htmlFor={`grat_check_${tplIdx}`} className="text-sm font-medium">
+                    Enable Monthly Gratuity & Retirement Benefit Accrual
+                  </label>
+                </div>
+                {tpl.gratuity?.enabled && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 text-xs">
+                    <div>
+                      <span className="text-slate-500">Gratuity Accrual Rate:</span>
+                      <p className="font-mono font-medium">{tpl.gratuity.percentage || 4.81}% of Basic Pay (15/26 days per year)</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Vesting Eligibility:</span>
+                      <p className="font-mono font-medium">{tpl.gratuity.eligibilityYears || 5} Years continuous service</p>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <span className="text-slate-500">Monthly Calculation Formula:</span>
+                      <p className="font-mono text-indigo-600 dark:text-indigo-400 font-semibold">{tpl.gratuity.calculationFormula || "(Basic * 15 / 26) per year of service"}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {/* Add New Template Form */}
+          <Form
+            fields={[
+              { key: "name", label: "Template Name", required: true, hint: "e.g., Executive Standard Payroll" },
+              { key: "description", label: "Description", required: false },
+            ]}
+            initial={{ name: "", description: "" }}
+            onSubmit={(body) => {
+              const newTpl = {
+                id: `tpl_${Date.now()}`,
+                name: body.name,
+                description: body.description,
+                allowances: [
+                  { id: `alw_b_${Date.now()}`, name: "Basic Salary", type: "percentage", value: 50, taxable: true },
+                  { id: `alw_h_${Date.now()}`, name: "HRA", type: "percentage", value: 40, taxable: true },
+                ],
+                deductions: [
+                  { id: `ded_p_${Date.now()}`, name: "PF", type: "percentage", value: 12, statutory: true },
+                ],
+                gratuity: {
+                  enabled: true,
+                  percentage: 4.81,
+                  eligibilityYears: 5,
+                  calculationFormula: "(Basic * 15 / 26) per year of service",
+                },
+              };
+              return save({
+                ...draft,
+                payrollTemplates: [...(draft.payrollTemplates || []), newTpl],
+              });
+            }}
+            submit="Create New Standard Template"
+          />
+        </div>
+        <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800">
+          <button className={buttonClass} onClick={() => void save(draft)}>
+            Save All Payroll Templates
+          </button>
+        </div>
+      </Panel>
       </Panel>
     </div>
   );

@@ -183,26 +183,105 @@ export default function SuiteView({
         </div>
       </div>
       {initialSection !== "payroll" && (
-        <nav aria-label="HR operations" className="suite-tabs">
-          {visible.map((key) => (
-            <button
-              key={key}
-              aria-current={active === key ? "page" : undefined}
-              className={active === key ? buttonClass : secondaryClass}
-              onClick={() => {
-                setSection(key);
-                setSelected("");
-                setError("");
-                setNotice("");
-              }}
-            >
-              {sectionLabels[key]}
-              {key === "approvals" && state.approvals.length
-                ? ` (${state.approvals.length})`
-                : ""}
-            </button>
-          ))}
-        </nav>
+        <div className="bg-slate-50/80 dark:bg-slate-900/80 backdrop-blur-md p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 shadow-sm space-y-3">
+          {/* Top Primary Category Hubs */}
+          <div className="flex flex-wrap gap-2">
+            {[
+              {
+                id: "hub_approvals",
+                label: "Inbox & Approvals",
+                badge: state.approvals?.length || 0,
+                keys: ["approvals", "self"],
+              },
+              {
+                id: "hub_operations",
+                label: "Daily Operations",
+                keys: ["expenses", "lifecycle", "helpdesk"],
+              },
+              {
+                id: "hub_workforce",
+                label: "Workforce & Org",
+                keys: ["workforce", "organization", "policies"],
+              },
+              {
+                id: "hub_admin",
+                label: "Admin & Setup",
+                keys: ["imports", "reports", "integrations", "configuration"],
+              },
+            ].map((hub) => {
+              const count = visible.filter((k) => hub.keys.includes(k)).length;
+              if (!count) return null;
+              const isCurrent = hub.keys.includes(active);
+              return (
+                <button
+                  key={hub.id}
+                  type="button"
+                  className={`relative flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all duration-200 ${
+                    isCurrent
+                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/25 ring-2 ring-indigo-600/30"
+                      : "bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:bg-slate-800/70 dark:text-slate-300 dark:hover:bg-slate-800"
+                  }`}
+                  onClick={() => {
+                    const firstValid = hub.keys.find((k) => visible.includes(k));
+                    if (firstValid) setSection(firstValid);
+                  }}
+                >
+                  <span>{hub.label}</span>
+                  {hub.badge > 0 && (
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      isCurrent
+                        ? "bg-white/20 text-white"
+                        : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                    }`}>
+                      {hub.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Sub-tabs strictly filtered by selected Hub */}
+          {(() => {
+            const hubs = [
+              { keys: ["approvals", "self"] },
+              { keys: ["expenses", "lifecycle", "helpdesk"] },
+              { keys: ["workforce", "organization", "policies"] },
+              { keys: ["imports", "reports", "integrations", "configuration"] },
+            ];
+            const activeHub = hubs.find((h) => h.keys.includes(active)) || hubs[0];
+            const filteredSubTabs = visible.filter((key) => activeHub.keys.includes(key));
+
+            return (
+              <nav aria-label="HR operations" className="flex flex-wrap gap-1.5 p-1 bg-slate-200/50 dark:bg-slate-950/60 rounded-xl border border-slate-200/60 dark:border-slate-800/60">
+                {filteredSubTabs.map((key) => (
+                  <button
+                    key={key}
+                    aria-current={active === key ? "page" : undefined}
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                      active === key
+                        ? "bg-white text-indigo-700 font-bold shadow-sm dark:bg-slate-800 dark:text-indigo-300"
+                        : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
+                    }`}
+                    onClick={() => {
+                      setSection(key);
+                      setSelected("");
+                      setError("");
+                      setNotice("");
+                    }}
+                  >
+                    {sectionLabels[key]}
+                    {key === "approvals" && state.approvals.length > 0 && (
+                      <span className="ml-1.5 text-[10px] font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950 px-1.5 py-0.5 rounded-full">
+                        {state.approvals.length}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </nav>
+            );
+          })()}
+        </div>
       )}
       {error && (
         <div

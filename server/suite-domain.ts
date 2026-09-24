@@ -127,6 +127,30 @@ export async function config(store: Store, orgId: string): Promise<any> {
     },
     expenseCategories: ["Travel", "Meals", "Supplies", "Other"],
     expenseLimit: 50000,
+    payrollTemplates: [
+      {
+        id: "std_default",
+        name: "Standard Full-Time Payroll",
+        description: "Default standard template with Basic, HRA, Medical & Transport Allowances, Gratuity, PF & ESI.",
+        allowances: [
+          { id: "a_basic", name: "Basic Salary", type: "percentage", value: 50, taxable: true },
+          { id: "a_hra", name: "House Rent Allowance (HRA)", type: "percentage", value: 40, taxable: true },
+          { id: "a_special", name: "Special Allowance", type: "fixed", value: 5000, taxable: true },
+          { id: "a_medical", name: "Medical Allowance", type: "fixed", value: 1250, taxable: false },
+        ],
+        deductions: [
+          { id: "d_pf", name: "Provident Fund (PF)", type: "percentage", value: 12, statutory: true },
+          { id: "d_esi", name: "ESI Employee Contribution", type: "percentage", value: 0.75, statutory: true },
+          { id: "d_pt", name: "Professional Tax", type: "fixed", value: 200, statutory: true },
+        ],
+        gratuity: {
+          enabled: true,
+          percentage: 4.81,
+          eligibilityYears: 5,
+          calculationFormula: "(Basic * 15 / 26) per year of service",
+        },
+      },
+    ],
     onboarding: templates.General.onboarding,
     offboarding: templates.General.offboarding,
     defaultLanguage: "en",
@@ -247,6 +271,37 @@ export async function validateConfig(body: any, store: Store, actor: Actor) {
     approvalChains,
     expenseCategories: stringList(next.expenseCategories, "Expense categories"),
     expenseLimit: number(next.expenseLimit, "Expense limit", 10000000),
+    payrollTemplates: Array.isArray(next.payrollTemplates)
+      ? next.payrollTemplates.map((t: any, idx: number) => ({
+          id: text(t.id || `tpl_${idx}`, "Template ID", 40),
+          name: text(t.name || "Custom Template", "Template Name", 100),
+          description: text(t.description || "", "Description", 250, true),
+          allowances: Array.isArray(t.allowances)
+            ? t.allowances.map((a: any, aIdx: number) => ({
+                id: text(a.id || `alw_${aIdx}`, "Allowance ID", 40),
+                name: text(a.name || "Allowance", "Allowance Name", 100),
+                type: choice(a.type || "percentage", "Allowance type", ["percentage", "fixed"]),
+                value: number(a.value || 0, "Allowance value", 10000000),
+                taxable: !!a.taxable,
+              }))
+            : [],
+          deductions: Array.isArray(t.deductions)
+            ? t.deductions.map((d: any, dIdx: number) => ({
+                id: text(d.id || `ded_${dIdx}`, "Deduction ID", 40),
+                name: text(d.name || "Deduction", "Deduction Name", 100),
+                type: choice(d.type || "percentage", "Deduction type", ["percentage", "fixed"]),
+                value: number(d.value || 0, "Deduction value", 10000000),
+                statutory: !!d.statutory,
+              }))
+            : [],
+          gratuity: {
+            enabled: !!t.gratuity?.enabled,
+            percentage: number(t.gratuity?.percentage || 4.81, "Gratuity Percentage", 100),
+            eligibilityYears: number(t.gratuity?.eligibilityYears || 5, "Eligibility Years", 50),
+            calculationFormula: text(t.gratuity?.calculationFormula || "(Basic * 15 / 26) per year", "Formula", 150, true),
+          },
+        }))
+      : current.payrollTemplates || [],
     onboarding: stringList(next.onboarding, "Onboarding tasks"),
     offboarding: stringList(next.offboarding, "Offboarding tasks"),
     defaultLanguage: choice(next.defaultLanguage, "language", [

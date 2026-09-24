@@ -39,6 +39,27 @@ export default function PayrollSuite({
   const line =
     period?.lines.find((l: Row) => l.employeeId === employeeId) ||
     period?.lines[0];
+
+  const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
+  const toggleSelectAll = (allIds: string[]) => {
+    if (selectedEmployees.length === allIds.length) {
+      setSelectedEmployees([]);
+    } else {
+      setSelectedEmployees(allIds);
+    }
+  };
+  const toggleSelectEmployee = (id: string) => {
+    setSelectedEmployees((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const periodLines = period?.lines || [];
+  const allEmpIds = periodLines.map((l: Row) => l.employeeId);
+  const selectedQuery = selectedEmployees.length
+    ? `&employees=${selectedEmployees.join(",")}`
+    : "";
+
   return (
     <div className="space-y-5">
       {staff && (
@@ -52,6 +73,31 @@ export default function PayrollSuite({
             onSubmit={(body) => run("/suite/payroll", "POST", body)}
             submit="Create draft"
           />
+        </Panel>
+      )}
+      {staff && state.settings?.payrollTemplates?.length > 0 && (
+        <Panel
+          title="Active Payroll Standard Templates"
+          description="Templates applied to monthly earnings, allowances, statutory deductions, and gratuity calculations."
+        >
+          <div className="grid sm:grid-cols-2 gap-4">
+            {state.settings.payrollTemplates.map((tpl: Row) => (
+              <div key={tpl.id} className="p-3 border border-slate-200 dark:border-slate-800 rounded-lg space-y-2 bg-slate-50/40 dark:bg-slate-900/30">
+                <div className="flex justify-between items-center">
+                  <span className="font-semibold text-sm text-slate-800 dark:text-slate-200">{tpl.name}</span>
+                  <span className="text-xs bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 px-2 py-0.5 rounded font-mono">
+                    {tpl.allowances?.length || 0} Allowances · {tpl.deductions?.length || 0} Deductions
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500">{tpl.description}</p>
+                {tpl.gratuity?.enabled && (
+                  <div className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                    ✓ Gratuity Accrual Enabled: {tpl.gratuity.calculationFormula}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </Panel>
       )}
       <Panel
@@ -74,6 +120,7 @@ export default function PayrollSuite({
               onClick={() => {
                 setSelected(p.id);
                 setEmployeeId("");
+                setSelectedEmployees([]);
               }}
             >
               Open period
@@ -83,14 +130,54 @@ export default function PayrollSuite({
       </Panel>
       {period && (
         <Panel title={`${period.month} · ${period.status}`}>
+          {staff && (
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl mb-4 text-xs">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="select_all_emp"
+                  checked={selectedEmployees.length === allEmpIds.length && allEmpIds.length > 0}
+                  onChange={() => toggleSelectAll(allEmpIds)}
+                />
+                <label htmlFor="select_all_emp" className="font-medium cursor-pointer">
+                  Select Employees for Export ({selectedEmployees.length > 0 ? `${selectedEmployees.length} Selected` : "Full Data / All Employees"})
+                </label>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className={secondaryClass}
+                  onClick={() => setSelectedEmployees(allEmpIds)}
+                >
+                  Select All
+                </button>
+                <button
+                  type="button"
+                  className={secondaryClass}
+                  onClick={() => setSelectedEmployees([])}
+                >
+                  Clear Selection
+                </button>
+              </div>
+            </div>
+          )}
+
           <Table
             rows={period.lines.map((l: Row) => ({
               ...l,
+              selectCol: staff ? (
+                <input
+                  type="checkbox"
+                  checked={selectedEmployees.includes(l.employeeId)}
+                  onChange={() => toggleSelectEmployee(l.employeeId)}
+                />
+              ) : null,
               grossText: money(l.gross),
               deductionsText: money(l.totalDeductions),
               netText: money(l.net),
             }))}
             columns={[
+              ...(staff ? [["selectCol", "Select"]] as [string, string][] : []),
               ["employeeName", "Employee"],
               ["grossText", "Gross"],
               ["deductionsText", "Deductions"],
@@ -121,19 +208,19 @@ export default function PayrollSuite({
             )}
           />
           {staff && (
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
               <a
                 className={secondaryClass}
-                href={`/api/suite/export/payroll?period=${period.id}`}
+                href={`/api/suite/export/payroll?period=${period.id}${selectedQuery}`}
               >
-                Export payroll register
+                Export Payroll Register {selectedEmployees.length > 0 ? `(${selectedEmployees.length} Selected)` : "(Full Data)"}
               </a>
               {["Approved", "Paid"].includes(period.status) && (
                 <a
                   className={secondaryClass}
-                  href={`/api/suite/export/accounting?period=${period.id}`}
+                  href={`/api/suite/export/accounting?period=${period.id}${selectedQuery}`}
                 >
-                  Export accounting amounts
+                  Export Bank Transfer Statements {selectedEmployees.length > 0 ? `(${selectedEmployees.length} Selected)` : "(Full Data)"}
                 </a>
               )}
             </div>
