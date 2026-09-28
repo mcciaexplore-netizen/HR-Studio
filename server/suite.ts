@@ -858,28 +858,210 @@ export function registerSuite(app: Express, store: Store) {
               "'": "&#39;",
             })[c]!,
         );
-      const rows = [
-        ["Regular earnings", line.gross - line.overtime - line.input.bonus],
+      const numberToWords = (num: number): string => {
+        const a = ['','One ','Two ','Three ','Four ', 'Five ','Six ','Seven ','Eight ','Nine ','Ten ','Eleven ','Twelve ','Thirteen ','Fourteen ','Fifteen ','Sixteen ','Seventeen ','Eighteen ','Nineteen '];
+        const b = ['', '', 'Twenty','Thirty','Forty','Fifty', 'Sixty','Seventy','Eighty','Ninety'];
+        let strNum = num.toString();
+        if (strNum.length > 9) return 'overflow';
+        const n = ('000000000' + strNum).slice(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
+        if (!n) return ''; 
+        let str = '';
+        str += (n[1] != '00') ? (a[Number(n[1])] || b[Number(n[1][0])] + ' ' + a[Number(n[1][1])]) + 'Crore ' : '';
+        str += (n[2] != '00') ? (a[Number(n[2])] || b[Number(n[2][0])] + ' ' + a[Number(n[2][1])]) + 'Lakh ' : '';
+        str += (n[3] != '00') ? (a[Number(n[3])] || b[Number(n[3][0])] + ' ' + a[Number(n[3][1])]) + 'Thousand ' : '';
+        str += (n[4] != '0') ? (a[Number(n[4])] || b[Number(n[4][0])] + ' ' + a[Number(n[4][1])]) + 'Hundred ' : '';
+        str += (n[5] != '00') ? ((str != '') ? 'and ' : '') + (a[Number(n[5])] || b[Number(n[5][0])] + ' ' + a[Number(n[5][1])]) : '';
+        return str.trim();
+      };
+
+      const earnings = [
+        ["Basic", line.gross - line.overtime - line.input.bonus],
         ["Overtime", line.overtime],
         ["Bonus", line.input.bonus],
-        ["Gross earnings", line.gross],
-        ["PF", line.pfEmployee],
+      ].filter(x => x[1] > 0);
+
+      const deductions = [
+        ["Provident Fund", line.pfEmployee],
+        ["Profesional Tax", line.professionalTax],
         ["ESI", line.esiEmployee],
-        ["Professional tax", line.professionalTax],
         ["Labour welfare", line.lwfEmployee],
         ["TDS", line.tds],
-        ["Other deductions", line.configuredDeduction + line.otherDeductions],
-        ["Reimbursement", line.reimbursement],
-        ["Net pay", line.net],
-      ];
+        ["Other", line.configuredDeduction + line.otherDeductions]
+      ].filter(x => x[1] > 0);
+
+      const totalEarnings = line.gross;
+      const totalDeductions = line.pfEmployee + line.professionalTax + line.esiEmployee + line.lwfEmployee + line.tds + line.configuredDeduction + line.otherDeductions;
+      
+      const rowsCount = Math.max(earnings.length, deductions.length);
+      let tableRows = '';
+      for (let i = 0; i < rowsCount; i++) {
+        const eName = earnings[i] ? earnings[i][0] : '';
+        const eAmount = earnings[i] ? earnings[i][1] : '';
+        const dName = deductions[i] ? deductions[i][0] : '';
+        const dAmount = deductions[i] ? deductions[i][1] : '';
+        
+        tableRows += `<tr>
+          <td style="padding:12px;border-right:1px solid black;text-align:left;">${escape(eName)}</td>
+          <td style="padding:12px;border-right:1px solid black;text-align:right;">${eAmount !== '' ? Number(eAmount).toFixed(0) : ''}</td>
+          <td style="padding:12px;border-right:1px solid black;text-align:left;">${escape(dName)}</td>
+          <td style="padding:12px;text-align:right;">${dAmount !== '' ? Number(dAmount).toFixed(0) : ''}</td>
+        </tr>`;
+      }
+
       res
         .set(
           "Content-Security-Policy",
-          "default-src 'none'; style-src 'unsafe-inline'",
+          "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; connect-src 'self' blob: data:"
         )
         .type("html")
         .send(
-          `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Payslip ${escape(period.month)}</title><style>body{font:16px system-ui;max-width:750px;margin:48px auto;padding:24px;color:#172033}table{border-collapse:collapse;width:100%}td{border-bottom:1px solid #ddd;padding:12px}td+td{text-align:right}small{color:#555}@media print{body{margin:0}}</style><h1>${escape(period.companySnapshot.name)}</h1><p>${escape(period.companySnapshot.location)} · Payslip for ${escape(period.month)}</p><h2>${escape(line.employeeName)}</h2><p>${escape(line.snapshot.designation)} · ${escape(line.snapshot.department)}</p><table>${rows.map(([name, value]) => `<tr><td>${escape(name)}</td><td>INR ${Number(value).toFixed(2)}</td></tr>`).join("")}</table><p>Payment status: ${escape(period.status)}${period.paymentReference ? " · " + escape(period.paymentReference) : ""}</p><small>Approved payroll snapshot. Use your browser’s Print menu to save a PDF. Approval does not confirm that funds have been transferred.</small></html>`,
+          `<!doctype html><html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>Payslip ${escape(period.month)}</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+body { font-family: system-ui, -apple-system, sans-serif; background: #f8fafc; color: #000; margin: 0; padding: 20px; }
+.container { max-width: 800px; margin: 40px auto; background: white; padding: 40px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); position: relative; }
+.actions { text-align: right; max-width: 800px; margin: 0 auto 10px auto; }
+.actions button { padding: 8px 16px; margin-left: 8px; cursor: pointer; border: 1px solid #ccc; background: white; border-radius: 4px; font-weight: 500; }
+.actions button.primary { background: #2563eb; color: white; border: none; }
+.header { text-align: center; position: relative; margin-bottom: 40px; }
+.logo-container { position: absolute; left: 0; top: 0; bottom: 0; display: flex; align-items: center; }
+.logo { width: 64px; height: 64px; background: #4f46e5; color: white; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; }
+h1 { margin: 0 0 8px 0; font-size: 24px; }
+h2 { margin: 0 0 4px 0; font-size: 20px; font-weight: 500; }
+.address { margin: 0; color: #4b5563; }
+.details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-bottom: 30px; font-size: 15px; }
+.detail-group { display: grid; grid-template-columns: 130px 1fr; gap: 8px; }
+.detail-label { color: #4b5563; }
+.detail-value { font-weight: 500; }
+.salary-table { width: 100%; border-collapse: collapse; border: 1px solid black; margin-bottom: 30px; font-size: 15px; }
+.salary-table th { background: #f3f4f6; border-bottom: 1px solid black; border-right: 1px solid black; padding: 12px; text-align: center; font-weight: 600; }
+.salary-table th:last-child { border-right: none; }
+.totals-row td { border-top: 1px solid black; border-right: 1px solid black; padding: 12px; font-weight: 600; text-align: right; }
+.totals-row td:last-child { border-right: none; }
+.net-pay-words { text-align: center; margin-bottom: 60px; font-size: 15px; }
+.net-pay-amount { font-weight: 500; margin-bottom: 4px; }
+.signatures { display: flex; justify-content: space-between; padding: 0 40px; margin-bottom: 60px; margin-top: 40px; }
+.sig-box { text-align: center; }
+.sig-line { width: 200px; border-bottom: 1px solid black; margin-top: 60px; }
+.footer { text-align: center; font-size: 15px; }
+@media print { body { background: white; padding: 0; } .container { box-shadow: none; margin: 0; padding: 0; max-width: 100%; } .actions { display: none; } }
+</style>
+</head>
+<body>
+
+<div class="actions">
+  <button onclick="downloadImage()">Download Image</button>
+  <button class="primary" onclick="downloadPDF()">Download PDF</button>
+</div>
+
+<div class="container" id="payslip-content">
+  <div class="header">
+    <div class="logo-container">
+      <div class="logo">${escape(period.companySnapshot.name.charAt(0))}</div>
+    </div>
+    <h1>Payslip</h1>
+    <h2>${escape(period.companySnapshot.name)}</h2>
+    <p class="address">
+      ${escape(period.companySnapshot.location)}<br>
+      Phone: ${escape(period.companySnapshot.phone || '+91 98765 43210')} | Email: ${escape(period.companySnapshot.email || 'contact@company.com')}
+    </p>
+  </div>
+
+  <div class="details-grid">
+    <div class="detail-group">
+      <span class="detail-label">Date of Joining</span>
+      <span class="detail-value">: ${escape(line.snapshot.hireDate || '')}</span>
+      <span class="detail-label">Pay Period</span>
+      <span class="detail-value">: ${escape(period.month)}</span>
+      <span class="detail-label">Worked Days</span>
+      <span class="detail-value">: ${escape(line.snapshot.workingDays || 30)}</span>
+    </div>
+    <div class="detail-group">
+      <span class="detail-label">Employee name</span>
+      <span class="detail-value">: ${escape(line.employeeName)}</span>
+      <span class="detail-label">Designation</span>
+      <span class="detail-value">: ${escape(line.snapshot.designation || '')}</span>
+      <span class="detail-label">Department</span>
+      <span class="detail-value">: ${escape(line.snapshot.department || '')}</span>
+    </div>
+  </div>
+
+  <table class="salary-table">
+    <thead>
+      <tr>
+        <th>Earnings</th>
+        <th style="width:120px">Amount</th>
+        <th>Deductions</th>
+        <th style="width:120px">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${tableRows}
+      <tr class="totals-row">
+        <td>Total Earnings</td>
+        <td>${Number(totalEarnings).toFixed(0)}</td>
+        <td style="display: flex; flex-direction: column; text-align: right; border: none; padding-right: 12px; gap: 8px;">
+           <span>Total Deductions</span>
+           <span>Net Pay</span>
+        </td>
+        <td style="text-align: right; display: flex; flex-direction: column; gap: 8px; border: none; padding-right: 12px;">
+           <span>${Number(totalDeductions).toFixed(0)}</span>
+           <span>${Number(line.net).toFixed(0)}</span>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="net-pay-words">
+    <div class="net-pay-amount">${Number(line.net).toFixed(0)}</div>
+    <div style="text-transform: capitalize;">${numberToWords(Math.round(line.net))}</div>
+  </div>
+
+  <div class="signatures">
+    <div class="sig-box">
+      <div style="font-size: 15px;">Employer Signature</div>
+      <div class="sig-line"></div>
+    </div>
+    <div class="sig-box">
+      <div style="font-size: 15px;">Employee Signature</div>
+      <div class="sig-line"></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    This is system generated payslip<br><br>
+    <small>Payment status: ${escape(period.status)}${period.paymentReference ? " · " + escape(period.paymentReference) : ""}</small>
+  </div>
+</div>
+
+<script>
+  async function downloadImage() {
+    const el = document.getElementById('payslip-content');
+    const canvas = await html2canvas(el, { scale: 2 });
+    const link = document.createElement('a');
+    link.download = 'Payslip_${escape(line.employeeName.replace(/\s+/g, '_'))}_${escape(period.month)}.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  }
+
+  async function downloadPDF() {
+    const el = document.getElementById('payslip-content');
+    const canvas = await html2canvas(el, { scale: 2 });
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jspdf.jsPDF('p', 'mm', 'a4');
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+    pdf.save('Payslip_${escape(line.employeeName.replace(/\s+/g, '_'))}_${escape(period.month)}.pdf');
+  }
+</script>
+</body>
+</html>`
         );
     }),
   );

@@ -82,8 +82,13 @@ export function createApp(store: Store, options: Options = {}) {
       const expected = options.appUrl
         ? new URL(options.appUrl).origin
         : `${req.protocol}://${req.get("host")}`;
-      if (req.get("origin") && req.get("origin") !== expected)
-        return next(new HttpError(403, "This origin is not allowed."));
+      const origin = req.get("origin");
+      if (origin && origin !== expected) {
+        const isLocalMismatch = (origin.includes('localhost') && expected.includes('127.0.0.1')) || (origin.includes('127.0.0.1') && expected.includes('localhost'));
+        if (!isLocalMismatch) {
+          return next(new HttpError(403, "This origin is not allowed."));
+        }
+      }
     }
     next();
   });

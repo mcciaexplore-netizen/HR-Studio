@@ -198,35 +198,7 @@ export function WorkspaceShell({
             <span role="status" className="save-status">
               {busy ? "Saving…" : ""}
             </span>
-            <select
-              aria-label="Navigation language"
-              value={language}
-              onChange={(event) => onLanguage(event.target.value)}
-              className="language-control"
-            >
-              <option value="en">English</option>
-              <option value="hi">हिन्दी</option>
-              <option value="mr">मराठी</option>
-            </select>
-            <button
-              className="icon-button"
-              aria-label="Refresh records"
-              title="Refresh records"
-              disabled={busy}
-              onClick={onRefresh}
-            >
-              <RefreshCw size={17} />
-            </button>
-            <button
-              className="icon-button theme-control"
-              aria-label={
-                theme === "dark" ? "Use light theme" : "Use dark theme"
-              }
-              title="Change appearance"
-              onClick={onTheme}
-            >
-              {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
+
             <div className="header-person">
               <PersonAvatar name={user.name} />
               <span>
